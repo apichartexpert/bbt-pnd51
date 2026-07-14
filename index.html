@@ -243,14 +243,14 @@
   #toast.show { opacity: .95; }
 
   /* P&L comparison table */
-  table.pl { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 560px; }
-  table.pl th, table.pl td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
-  table.pl thead th { background: var(--blue-light); color: var(--blue-dark); font-size: .8rem; text-align: right; white-space: nowrap; }
+  table.pl { width: 100%; border-collapse: collapse; font-size: 1.02rem; min-width: 520px; }
+  table.pl th, table.pl td { padding: 6px 6px; border-bottom: 1px solid var(--border); }
+  table.pl thead th { background: var(--blue-light); color: var(--blue-dark); font-size: .82rem; text-align: right; white-space: nowrap; }
   table.pl thead th.grp { text-align: center; border-bottom: 1px solid var(--blue); }
   table.pl thead th:first-child { text-align: left; }
   table.pl td.name { text-align: left; white-space: nowrap; }
   table.pl td.amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  table.pl td.pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--gray); font-size: .8rem; white-space: nowrap; }
+  table.pl td.pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--gray); font-size: .9rem; white-space: nowrap; padding-left: 3px; padding-right: 10px; }
   table.pl tr.subtotal td { font-weight: 700; background: #fafbfd; border-top: 1.5px solid var(--border); }
   table.pl tr.net td { font-weight: 800; border-top: 2px solid var(--blue-dark); color: var(--blue-dark); background: var(--blue-light); }
   table.pl td.up { color: var(--green); }
@@ -493,6 +493,7 @@
     <div class="btn-row">
       <button class="btn-primary" id="btnSave" type="button">💾 บันทึกผลสรุป</button>
       <button class="btn-outline" id="btnPrint" type="button">🖨 พิมพ์สรุปแบบ ภ.ง.ด.51</button>
+      <button class="btn-outline" id="btnDownloadPrint" type="button">⬇ ดาวน์โหลดไฟล์สรุป (.html)</button>
     </div>
     <p class="note">กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
     (รอบปีปฏิทิน: ภายใน 31 สิงหาคม — ยื่นออนไลน์ได้รับสิทธิขยายเวลาเพิ่มตามประกาศกรมสรรพากร)
@@ -1331,39 +1332,44 @@ const PRINT_CSS = `
   table.pl td.up { color:#1e7d43; }
   @media print { body { margin:8mm; } }
 `;
-$('btnPrint').addEventListener('click', () => {
-  if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนสั่งพิมพ์'); return; }
+function makePrintDoc(autoPrint) {
   buildPrintReport();
   const inner = $('printReport').innerHTML;
   // ถ้ามีตารางเปรียบเทียบ (กว้าง) ให้พิมพ์แนวนอนเพื่อไม่ให้ตกขอบ
   const wide = !!(estimatePeriod() && $('plTable').innerHTML.trim());
   const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 8mm; }`;
-  const doc = '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">'
+  const auto = autoPrint
+    ? '<scr' + 'ipt>window.onload=function(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},300);};</scr' + 'ipt>'
+    : '';
+  return '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">'
     + '<title>สรุปแบบ ภ.ง.ด.51</title><style>' + PRINT_CSS + pageCss + '</style></head><body>'
-    + inner
-    + '<scr' + 'ipt>window.onload=function(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},300);};</scr' + 'ipt>'
-    + '</body></html>';
+    + inner + auto + '</body></html>';
+}
+function downloadPrintFile() {
+  const doc = makePrintDoc(true);
+  const blob = new Blob([doc], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `สรุป-ภงด51-${stamp()}.html`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  toast('ดาวน์โหลดไฟล์สรุปแล้ว — เปิดไฟล์ที่ดาวน์โหลด หน้าต่างพิมพ์จะขึ้นเอง (หรือกด Ctrl/Cmd+P)');
+}
+$('btnPrint').addEventListener('click', () => {
+  if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนสั่งพิมพ์'); return; }
+  const doc = makePrintDoc(true);
   let w = null;
   try { w = window.open('', '_blank'); } catch (e) { w = null; }
   if (w && w.document) {
-    // เปิดแท็บใหม่แล้วสั่งพิมพ์ (ใช้ได้บนเว็บไซต์จริง เช่น GitHub Pages / เปิดไฟล์โดยตรง)
-    w.document.open(); w.document.write(doc); w.document.close();
-  } else {
-    // ป็อปอัปถูกบล็อก (เช่น ในแซนด์บ็อกซ์ของ Artifact) — ดาวน์โหลดไฟล์เอกสารให้เปิดพิมพ์เอง
-    try {
-      const blob = new Blob([doc], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `สรุป-ภงด51-${stamp()}.html`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
-      toast('ดาวน์โหลดไฟล์สรุปแล้ว — เปิดไฟล์ที่ดาวน์โหลด แล้วหน้าต่างพิมพ์จะขึ้นเอง (หรือกด Ctrl/Cmd+P)');
-    } catch (e) {
-      try { window.print(); } catch (e2) {
-        toast('ไม่สามารถพิมพ์ในหน้านี้ได้ โปรดเปิดแอปบนเว็บไซต์จริง (GitHub Pages) หรือเปิดไฟล์ index.html โดยตรง');
-      }
-    }
+    try { w.document.open(); w.document.write(doc); w.document.close(); return; }
+    catch (e) { try { w.close(); } catch (e2) {} }
   }
+  // เปิดแท็บใหม่ไม่ได้ (เช่น แซนด์บ็อกซ์ของ Artifact) — ดาวน์โหลดไฟล์ให้เปิดพิมพ์แทน
+  downloadPrintFile();
+});
+$('btnDownloadPrint').addEventListener('click', () => {
+  if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนดาวน์โหลด'); return; }
+  downloadPrintFile();
 });
 
 function buildPrintReport() {
