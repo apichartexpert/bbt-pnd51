@@ -410,8 +410,12 @@
     <h2><span class="step">4</span> ประมาณการกำไรและปรับปรุงทางภาษี</h2>
     <div class="grid">
       <div class="field">
-        <label>ประมาณการรายได้ทั้งปี (บาท) <span class="hint">— ใช้ตรวจเกณฑ์ SME (ไม่บังคับ)</span></label>
+        <label>ประมาณการรายได้ทั้งปี (บาท) <span class="hint">— ใช้ตรวจเกณฑ์ SME</span></label>
         <input type="text" class="num" id="inRevenue" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ประมาณการรายจ่ายทั้งปี (บาท) <span class="hint">— รายได้ − รายจ่าย = กำไร</span></label>
+        <input type="text" class="num" id="inExpense" placeholder="0.00">
       </div>
       <div class="field">
         <label>ประมาณการกำไร(ขาดทุน)สุทธิทางบัญชีทั้งปี (บาท) *</label>
@@ -801,6 +805,7 @@ function calculate() {
   saveCompanyFromForm();
   const c = activeCompany();
   const revenue = parseNum($('inRevenue').value);
+  const expense = parseNum($('inExpense').value);        // ประมาณการรายจ่ายทั้งปี
   const profit = parseNum($('inProfit').value);          // กำไรสุทธิทางบัญชี
   const addBack = parseNum($('inAddBack').value);         // ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย (+)
   const exempt = parseNum($('inExempt').value);           // รายได้ที่ได้รับการยกเว้น (−)
@@ -842,7 +847,7 @@ function calculate() {
   }
 
   lastResult = {
-    company: { ...c }, revenue, profit, addBack, exempt,
+    company: { ...c }, revenue, expense, profit, addBack, exempt,
     taxableBeforeLoss, availableLoss, lossUsed, taxableProfit,
     lastYear, lastYearBlank, wht, half, tax, brackets, netPay,
     entityType: c.entityType, date: new Date().toISOString()
@@ -854,6 +859,8 @@ function renderResult() {
   const r = lastResult;
   const tbl = $('calcTable');
   let rows = '';
+  if (r.revenue) rows += `<tr class="sub"><td>ประมาณการรายได้ทั้งปี</td><td class="amt">${fmt(r.revenue)}</td></tr>`;
+  if (r.expense) rows += `<tr class="sub"><td>หัก ประมาณการรายจ่ายทั้งปี</td><td class="amt">(${fmt(r.expense)})</td></tr>`;
   rows += `<tr><td>ประมาณการกำไร(ขาดทุน)สุทธิทางบัญชีทั้งปี</td><td class="amt">${fmt(r.profit)}</td></tr>`;
   if (r.addBack) rows += `<tr class="sub"><td>บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย</td><td class="amt">${fmt(r.addBack)}</td></tr>`;
   if (r.exempt) rows += `<tr class="sub"><td>หัก รายได้ที่ได้รับการยกเว้น</td><td class="amt">(${fmt(r.exempt)})</td></tr>`;
@@ -994,7 +1001,9 @@ function pndSummaryHtml(r) {
   const row = (label, val, cls) => `<tr class="${cls || 'line'}"><td>${label}</td><td class="amt">${fmt(val)}</td></tr>`;
   const rowNeg = (label, val) => `<tr class="line add"><td>${label}</td><td class="amt">(${fmt(val)})</td></tr>`;
   let body = '';
-  body += row('รายได้ / กำไรสุทธิทางบัญชีทั้งปี (ประมาณการ)', r.profit);
+  if (r.revenue) body += `<tr class="line add"><td>ประมาณการรายได้ทั้งปี</td><td class="amt">${fmt(r.revenue)}</td></tr>`;
+  if (r.expense) body += rowNeg('หัก ประมาณการรายจ่ายทั้งปี', r.expense);
+  body += row('ประมาณการกำไร(ขาดทุน)สุทธิทางบัญชีทั้งปี', r.profit);
   if (r.addBack) body += `<tr class="line add"><td>บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย</td><td class="amt">${fmt(r.addBack)}</td></tr>`;
   if (r.exempt) body += rowNeg('หัก รายได้ที่ได้รับการยกเว้น', r.exempt);
   if (r.addBack || r.exempt) body += row('กำไรสุทธิทางภาษีก่อนหักขาดทุนสะสม', r.taxableBeforeLoss, 'sub2');
@@ -1031,10 +1040,24 @@ function renderPndSummary(r) {
 
 $('btnCalc').addEventListener('click', calculate);
 $('btnClear').addEventListener('click', () => {
-  ['inRevenue', 'inProfit', 'inAddBack', 'inExempt', 'inLastYearProfit', 'inWht', 'inLossUsed']
+  ['inRevenue', 'inExpense', 'inProfit', 'inAddBack', 'inExempt', 'inLastYearProfit', 'inWht', 'inLossUsed']
     .forEach(id => $(id).value = '');
   $('resultCard').style.display = 'none';
   lastResult = null;
+});
+
+// เชื่อมโยง: รายได้ − รายจ่าย = กำไรสุทธิทางบัญชี (คำนวณให้อัตโนมัติเมื่อกรอกครบ)
+const hasVal = id => $(id).value.trim() !== '';
+function setNum(id, v) { $(id).value = fmt(v); }
+$('inRevenue').addEventListener('change', () => {
+  if (hasVal('inExpense')) setNum('inProfit', parseNum($('inRevenue').value) - parseNum($('inExpense').value));
+  else if (hasVal('inProfit')) setNum('inExpense', parseNum($('inRevenue').value) - parseNum($('inProfit').value));
+});
+$('inExpense').addEventListener('change', () => {
+  if (hasVal('inRevenue')) setNum('inProfit', parseNum($('inRevenue').value) - parseNum($('inExpense').value));
+});
+$('inProfit').addEventListener('change', () => {
+  if (hasVal('inRevenue')) setNum('inExpense', parseNum($('inRevenue').value) - parseNum($('inProfit').value));
 });
 
 /* ---------- บันทึก / ประวัติ ---------- */
@@ -1089,10 +1112,41 @@ window.deleteHistory = function (i) {
 };
 
 /* ---------- พิมพ์ ---------- */
+// CSS สำหรับเอกสารพิมพ์ (ใช้ในหน้าต่างพิมพ์แยก เพื่อให้พิมพ์ได้ทุกสภาพแวดล้อม)
+const PRINT_CSS = `
+  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; margin:24px; font-size:13px; line-height:1.5; }
+  h1 { font-size:18px; text-align:center; margin:0 0 2px; }
+  .sub-title { text-align:center; color:#444; margin-bottom:16px; font-size:12px; }
+  .box { border:1px solid #999; border-radius:6px; padding:12px 16px; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:4px 4px; vertical-align:top; }
+  td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  tr.total td { border-top:1.5px solid #000; font-weight:700; padding-top:8px; }
+  .warn-print { border:1px solid #b7791f; background:#fdf3e0; border-radius:6px; padding:10px 14px; margin-top:10px; font-size:12px; }
+  .footer { margin-top:24px; font-size:11px; color:#666; }
+  .sign { margin-top:40px; display:flex; justify-content:flex-end; gap:16px; }
+  .sign .line { flex:1; max-width:220px; text-align:center; font-size:11px; }
+  .sign .line hr { border:none; border-top:1px dotted #333; margin-bottom:4px; margin-top:36px; }
+  @media print { body { margin:8mm; } }
+`;
 $('btnPrint').addEventListener('click', () => {
-  if (!lastResult) return;
+  if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนสั่งพิมพ์'); return; }
   buildPrintReport();
-  window.print();
+  const inner = $('printReport').innerHTML;
+  const doc = '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">'
+    + '<title>สรุปแบบ ภ.ง.ด.51</title><style>' + PRINT_CSS + '</style></head><body>'
+    + inner
+    + '<scr' + 'ipt>window.onload=function(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},300);};</scr' + 'ipt>'
+    + '</body></html>';
+  let w = null;
+  try { w = window.open('', '_blank'); } catch (e) { w = null; }
+  if (w && w.document) {
+    w.document.open(); w.document.write(doc); w.document.close();
+  } else {
+    // เปิดหน้าต่างใหม่ไม่ได้ (มักเกิดในหน้าตัวอย่าง/แซนด์บ็อกซ์) — ลองพิมพ์จากหน้าเดิม แล้วแจ้งเตือน
+    try { window.print(); } catch (e) { /* บางสภาพแวดล้อมปิดการพิมพ์ */ }
+    toast('ถ้าไม่ขึ้นหน้าต่างพิมพ์ โปรดเปิดแอปบนเว็บไซต์จริง (เช่น GitHub Pages) หรือเปิดไฟล์ index.html โดยตรง แล้วสั่งพิมพ์อีกครั้ง');
+  }
 });
 
 function buildPrintReport() {
@@ -1117,6 +1171,7 @@ function buildPrintReport() {
 
   const adj = [];
   if (r.revenue) adj.push(`<tr><td>ประมาณการรายได้ทั้งปี</td><td class="amt">${fmt(r.revenue)}</td></tr>`);
+  if (r.expense) adj.push(`<tr><td style="padding-left:20px">หัก ประมาณการรายจ่ายทั้งปี</td><td class="amt">(${fmt(r.expense)})</td></tr>`);
   adj.push(`<tr><td>ประมาณการกำไร(ขาดทุน)สุทธิทางบัญชีทั้งปี</td><td class="amt">${fmt(r.profit)}</td></tr>`);
   if (r.addBack) adj.push(`<tr><td style="padding-left:20px">บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย</td><td class="amt">${fmt(r.addBack)}</td></tr>`);
   if (r.exempt) adj.push(`<tr><td style="padding-left:20px">หัก รายได้ที่ได้รับการยกเว้น</td><td class="amt">(${fmt(r.exempt)})</td></tr>`);
@@ -1404,6 +1459,7 @@ $('btnUseEst').addEventListener('click', () => {
   const srcTag = (est === parsedC) ? 'C' : (est === parsedB) ? 'B' : 'A';
   $('inProfit').value = fmt(R.net);
   if (R.revenue) $('inRevenue').value = fmt(R.revenue);
+  $('inExpense').value = fmt(R.revenue - R.net);   // รายจ่าย = รายได้ − กำไร
   toast(`นำประมาณการทั้งปี (${srcTag} ปัดพัน) ไปใส่ช่องคำนวณแล้ว`);
   $('inProfit').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
