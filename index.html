@@ -529,7 +529,7 @@
   <!-- ===== ประวัติ ===== -->
   <div class="card screen-only">
     <h2><span class="step">7</span> ประวัติที่บันทึกไว้ <span class="hint" id="historyCompanyName"></span></h2>
-    <div id="historyWrap"></div>
+    <div id="historyWrap" style="overflow-x:auto"></div>
   </div>
 
   <!-- ===== รายงานสำหรับพิมพ์ ===== -->
@@ -1253,16 +1253,18 @@ $('inProfit').addEventListener('change', () => {
 $('btnSave').addEventListener('click', () => {
   if (!lastResult) return;
   const c = activeCompany();
+  const r = lastResult;
   c.history.unshift({
-    date: lastResult.date,
+    date: r.date,
     year: c.year,
-    entityType: lastResult.entityType,
-    profit: lastResult.profit,
-    tax: lastResult.tax,
-    wht: lastResult.wht,
-    netPay: Math.max(lastResult.netPay, 0),
-    revenue: lastResult.revenue,
-    lastYear: lastResult.lastYear
+    entityType: r.entityType,
+    // ค่าสำหรับแสดงผล
+    tax: r.tax,
+    netPay: Math.max(r.netPay, 0),
+    // ค่าตั้งต้นทั้งหมด สำหรับเรียกกลับมาแก้ไข
+    revenue: r.revenue, expense: r.expense, profit: r.profit,
+    addBack: r.addBack, exempt: r.exempt, lastYear: r.lastYear,
+    wht: r.wht, lossUsed: r.lossUsed
   });
   saveDB();
   renderHistory();
@@ -1288,7 +1290,10 @@ function renderHistory() {
       <td class="amt">${fmt(h.profit)}</td>
       <td class="amt">${fmt(h.tax)}</td>
       <td class="amt">${fmt(h.netPay)}</td>
-      <td><button class="btn-danger-outline" onclick="deleteHistory(${i})">ลบ</button></td>
+      <td style="white-space:nowrap">
+        <button class="btn-outline btn-sm" onclick="loadHistory(${i})">✎ แก้ไข</button>
+        <button class="btn-danger-outline" onclick="deleteHistory(${i})">ลบ</button>
+      </td>
     </tr>`;
   });
   html += '</table>';
@@ -1298,6 +1303,21 @@ window.deleteHistory = function (i) {
   const c = activeCompany();
   c.history.splice(i, 1);
   saveDB(); renderHistory();
+};
+window.loadHistory = function (i) {
+  const c = activeCompany();
+  const h = c.history[i];
+  if (!h) return;
+  const put = (id, v) => { $(id).value = (v || v === 0) ? fmt(v) : ''; };
+  put('inRevenue', h.revenue); put('inExpense', h.expense); put('inProfit', h.profit);
+  put('inAddBack', h.addBack); put('inExempt', h.exempt);
+  put('inLastYearProfit', h.lastYear); put('inWht', h.wht); put('inLossUsed', h.lossUsed);
+  const et = h.entityType || 'sme';
+  const radio = document.querySelector(`input[name="entityType"][value="${et}"]`);
+  if (radio) { radio.checked = true; syncRadioStyle(); saveCompanyFromForm(); }
+  calculate();
+  toast('เรียกรายการมาแก้ไขแล้ว — ปรับตัวเลขแล้วกด "คำนวณภาษี" อีกครั้งเพื่ออัปเดต');
+  document.querySelector('#inProfit').scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
 /* ---------- พิมพ์ ---------- */
