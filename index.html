@@ -175,6 +175,31 @@
   .emp-item .sp { flex: 1; }
   .emp-empty { color: #9aa3ae; font-size: .85rem; padding: 6px 2px; }
 
+  /* workflow / sign-off */
+  .wf-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 20px; font-size: .9rem; font-weight: 700; }
+  .wf-draft { background: #eceff3; color: #5a6472; }
+  .wf-submitted { background: var(--amber-light); color: var(--amber); }
+  .wf-reviewed { background: var(--blue-light); color: var(--blue-dark); }
+  .wf-approved { background: var(--green-light); color: var(--green); }
+  .wf-log-item { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: .88rem; }
+  .wf-log-item:last-child { border-bottom: none; }
+  .wf-log-item .ico { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .85rem; }
+  .wf-log-item .ico.ok { background: var(--green-light); }
+  .wf-log-item .ico.rej { background: var(--red-light); }
+  .wf-log-item .ico.sub { background: var(--amber-light); }
+  .wf-log-item .body { flex: 1; }
+  .wf-log-item .who { font-weight: 600; }
+  .wf-log-item .meta { color: var(--gray); font-size: .8rem; }
+  .wf-log-item .nt { color: #22262c; font-size: .84rem; margin-top: 2px; }
+  .wf-empty { color: #9aa3ae; font-size: .85rem; padding: 6px 2px; }
+  .btn-approve { background: var(--green); color: #fff; }
+  .btn-approve:hover { filter: brightness(.94); }
+  .btn-reject { background: #fff; color: var(--red); border: 1.5px solid var(--red); }
+  /* summary sign-off tags */
+  .signed-tag { color: var(--green); font-weight: 700; }
+  .sign-name { font-weight: 600; }
+  .sign-date { color: var(--gray); font-size: .78rem; }
+
   /* PND.51 summary front page */
   .pnd-summary { border: 1.5px solid var(--blue); border-radius: 10px; padding: 18px 20px; margin-top: 18px; background: #fff; }
   .pnd-summary h3 { text-align: center; color: var(--blue-dark); font-size: 1.05rem; margin-bottom: 2px; }
@@ -474,9 +499,35 @@
     · โปรแกรมนี้เป็นเครื่องมือช่วยคำนวณเบื้องต้น โปรดตรวจสอบกับผู้สอบบัญชี/กรมสรรพากรก่อนยื่นจริง</p>
   </div>
 
+  <!-- ===== การตรวจสอบและอนุมัติ (Sign-off) ===== -->
+  <div class="card screen-only">
+    <h2><span class="step">6</span> การตรวจสอบและอนุมัติ (Review &amp; Sign-off)</h2>
+    <div id="wfStatusRow" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:6px">
+      <span style="font-weight:600; color:var(--gray)">สถานะปัจจุบัน:</span>
+      <span id="wfBadge" class="wf-badge"></span>
+      <span id="wfSnapshot" class="hint"></span>
+    </div>
+    <div id="wfActionArea">
+      <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:6px">
+        <div class="field">
+          <label>ผู้ดำเนินการ (เลือกจากฐานข้อมูลพนักงาน)</label>
+          <select id="wfActor"></select>
+        </div>
+        <div class="field">
+          <label>หมายเหตุ / ความเห็น <span class="hint">(ไม่บังคับ)</span></label>
+          <input type="text" id="wfNote" placeholder="เช่น ตรวจแล้วถูกต้อง / ขอแก้ไขรายการ...">
+        </div>
+      </div>
+      <div class="btn-row" id="wfButtons"></div>
+    </div>
+    <div class="sub-head">ประวัติการดำเนินการ (Audit Trail)</div>
+    <div id="wfLog"></div>
+    <p class="note">ระบบนี้ทำงานแบบไม่ต้องมีเซิร์ฟเวอร์กลาง — ส่งงานให้ผู้ตรวจ/ผู้อนุมัติโดยกดปุ่ม "ส่งไฟล์ให้ผู้ตรวจ/อนุมัติ" (ส่งออกไฟล์ .json) แล้วให้อีกฝ่ายนำเข้า (Import) เพื่อตรวจและ Sign-off ในเครื่องของตน สถานะและลายเซ็นจะติดไปกับไฟล์</p>
+  </div>
+
   <!-- ===== ประวัติ ===== -->
   <div class="card screen-only">
-    <h2><span class="step">6</span> ประวัติที่บันทึกไว้ <span class="hint" id="historyCompanyName"></span></h2>
+    <h2><span class="step">7</span> ประวัติที่บันทึกไว้ <span class="hint" id="historyCompanyName"></span></h2>
     <div id="historyWrap"></div>
   </div>
 
@@ -568,9 +619,16 @@ function newCompany() {
            name: '', taxId: '', year: new Date().getFullYear() + 543,
            jobCode: '', yearEnd: '', preparer: '', reviewer: '', approver: '',
            lossCarry: [0, 0, 0, 0, 0],
-           entityType: 'sme', history: [] };
+           entityType: 'sme', history: [],
+           workflow: { status: 'draft', snapshot: null, log: [] } };
 }
 function activeCompany() { return db.companies.find(c => c.id === db.activeId); }
+function ensureWorkflow(c) {
+  if (!c.workflow || typeof c.workflow !== 'object') c.workflow = { status: 'draft', snapshot: null, log: [] };
+  if (!c.workflow.status) c.workflow.status = 'draft';
+  if (!Array.isArray(c.workflow.log)) c.workflow.log = [];
+  return c.workflow;
+}
 
 /* ---------- UI: company ---------- */
 function renderCompanySelect() {
@@ -597,6 +655,7 @@ function loadCompanyToForm() {
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
   renderLossTable();
   renderHistory();
+  renderWorkflow();
   $('resultCard').style.display = 'none';
 }
 function saveCompanyFromForm() {
@@ -726,14 +785,16 @@ $('btnExport').addEventListener('click', () => {
               `pnd51-ข้อมูลทั้งหมด-${stamp()}.json`);
   toast('ส่งออกข้อมูลทั้งหมดแล้ว');
 });
-$('btnExportOne').addEventListener('click', () => {
+function exportCompany() {
   saveCompanyFromForm();
   const c = activeCompany();
   downloadJSON({ _type: 'pnd51-data', version: 1, exportedAt: new Date().toISOString(),
                 companies: [c], employees: db.employees },
               `pnd51-${(c.name || 'บริษัท').replace(/[\\/:*?"<>|]/g, '')}-${stamp()}.json`);
-  toast('ส่งออกข้อมูลบริษัทนี้แล้ว');
-});
+  toast('ส่งออกข้อมูลบริษัทนี้แล้ว — ส่งไฟล์ให้ผู้ตรวจ/อนุมัติเพื่อนำเข้าและ Sign-off');
+}
+window.exportCompany = exportCompany;
+$('btnExportOne').addEventListener('click', exportCompany);
 $('btnImport').addEventListener('click', () => $('importData').click());
 $('importData').addEventListener('change', e => {
   const file = e.target.files[0];
@@ -776,6 +837,113 @@ $('importData').addEventListener('change', e => {
   };
   reader.readAsText(file);
 });
+
+/* ---------- Workflow / Sign-off ---------- */
+const WF_STATUS = {
+  draft:     { label: 'ร่าง (ยังไม่ส่งตรวจ)', cls: 'wf-draft' },
+  submitted: { label: 'รอตรวจสอบ', cls: 'wf-submitted' },
+  reviewed:  { label: 'ผ่านการตรวจ · รออนุมัติ', cls: 'wf-reviewed' },
+  approved:  { label: 'อนุมัติแล้ว', cls: 'wf-approved' }
+};
+const WF_ACTION = {
+  submit:          { label: 'ส่งให้ตรวจสอบ', role: 'ผู้จัดทำ', ico: 'sub', icon: '📤' },
+  'review-pass':   { label: 'ผ่านการตรวจสอบ', role: 'ผู้ตรวจสอบ', ico: 'ok', icon: '✔' },
+  'review-reject': { label: 'ตีกลับให้แก้ไข', role: 'ผู้ตรวจสอบ', ico: 'rej', icon: '↩' },
+  approve:         { label: 'อนุมัติ', role: 'ผู้อนุมัติ', ico: 'ok', icon: '✅' },
+  'approve-reject':{ label: 'ตีกลับ', role: 'ผู้อนุมัติ', ico: 'rej', icon: '↩' },
+  reopen:          { label: 'เปิดแก้ไขใหม่', role: '—', ico: 'sub', icon: '🔓' }
+};
+
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('th-TH') + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+}
+function wfActorOptions(defaultName) {
+  let opts = '<option value="">— เลือกผู้ดำเนินการ —</option>';
+  (db.employees || []).forEach(e => {
+    opts += `<option value="${escapeHtml(e.name)}"${e.name === defaultName ? ' selected' : ''}>${escapeHtml(e.name)}${e.role ? ' (' + escapeHtml(e.role) + ')' : ''}</option>`;
+  });
+  return opts;
+}
+function signoffFor(wf, role) { return (wf.current && wf.current[role]) ? wf.current[role] : null; }
+
+function renderWorkflow() {
+  const c = activeCompany();
+  const wf = ensureWorkflow(c);
+  if (!wf.current) wf.current = {};
+  const st = WF_STATUS[wf.status] || WF_STATUS.draft;
+  $('wfBadge').className = 'wf-badge ' + st.cls;
+  $('wfBadge').textContent = st.label;
+  $('wfSnapshot').textContent = wf.snapshot
+    ? `(ยอดที่ส่งตรวจ: ภาษีที่ต้องชำระ ${fmt(Math.max(wf.snapshot.netPay, 0))} บาท · ส่งเมื่อ ${fmtDateTime(wf.snapshot.at)})`
+    : '';
+
+  const defName = wf.status === 'draft' ? c.preparer
+                : wf.status === 'submitted' ? c.reviewer
+                : wf.status === 'reviewed' ? c.approver : '';
+  $('wfActor').innerHTML = wfActorOptions(defName);
+
+  let b = '';
+  if (wf.status === 'draft') {
+    b += `<button class="btn-primary btn-sm" onclick="wfDo('submit')" type="button">📤 ส่งให้ตรวจสอบ</button>`;
+  } else if (wf.status === 'submitted') {
+    b += `<button class="btn-approve btn-sm" onclick="wfDo('review-pass')" type="button">✔ ผ่านการตรวจ – ส่งอนุมัติ</button>`;
+    b += `<button class="btn-reject btn-sm" onclick="wfDo('review-reject')" type="button">↩ ตีกลับให้แก้ไข</button>`;
+  } else if (wf.status === 'reviewed') {
+    b += `<button class="btn-approve btn-sm" onclick="wfDo('approve')" type="button">✅ อนุมัติ</button>`;
+    b += `<button class="btn-reject btn-sm" onclick="wfDo('approve-reject')" type="button">↩ ตีกลับ</button>`;
+  } else if (wf.status === 'approved') {
+    b += `<button class="btn-outline btn-sm" onclick="wfDo('reopen')" type="button">🔓 เปิดแก้ไขใหม่</button>`;
+  }
+  b += `<button class="btn-outline btn-sm" onclick="exportCompany()" type="button">📎 ส่งไฟล์ให้ผู้ตรวจ/อนุมัติ</button>`;
+  $('wfButtons').innerHTML = b;
+
+  const wrap = $('wfLog');
+  if (!wf.log.length) { wrap.innerHTML = '<div class="wf-empty">ยังไม่มีการดำเนินการ</div>'; }
+  else {
+    wrap.innerHTML = wf.log.slice().reverse().map(e => {
+      const a = WF_ACTION[e.action] || { label: e.action, role: '', ico: 'sub', icon: '•' };
+      return `<div class="wf-log-item"><div class="ico ${a.ico}">${a.icon}</div><div class="body">`
+        + `<div><span class="who">${escapeHtml(e.name || '-')}</span> <span class="meta">— ${a.role} · ${a.label}</span></div>`
+        + `<div class="meta">${fmtDateTime(e.at)}</div>`
+        + (e.note ? `<div class="nt">“${escapeHtml(e.note)}”</div>` : '')
+        + `</div></div>`;
+    }).join('');
+  }
+}
+
+window.wfDo = function (action) {
+  const c = activeCompany();
+  const wf = ensureWorkflow(c);
+  if (!wf.current) wf.current = {};
+  const name = $('wfActor').value;
+  const note = $('wfNote').value.trim();
+  if (action !== 'reopen' && !name) { toast('กรุณาเลือกผู้ดำเนินการก่อน'); return; }
+  const at = new Date().toISOString();
+
+  if (action === 'submit') {
+    if (!lastResult) { toast('กรุณากด "คำนวณภาษี" เพื่อสร้างผลสรุปก่อนส่งตรวจ'); return; }
+    wf.snapshot = { netPay: lastResult.netPay, tax: lastResult.tax, taxableProfit: lastResult.taxableProfit,
+                    half: lastResult.half, revenue: lastResult.revenue, expense: lastResult.expense,
+                    year: c.year, entityType: lastResult.entityType, at };
+    wf.status = 'submitted';
+    wf.current = { preparer: { name, at } };
+  } else if (action === 'review-pass') {
+    wf.status = 'reviewed'; wf.current.reviewer = { name, at };
+  } else if (action === 'approve') {
+    wf.status = 'approved'; wf.current.approver = { name, at };
+  } else if (action === 'review-reject' || action === 'approve-reject' || action === 'reopen') {
+    wf.status = 'draft'; wf.current = {};      // ล้างลายเซ็นรอบปัจจุบัน (log ยังคงอยู่)
+  }
+  wf.log.push({ action, name: name || '—', note, at });
+  $('wfNote').value = '';
+  saveDB();
+  renderWorkflow();
+  if (lastResult) renderPndSummary(lastResult);
+  const msg = { submit: 'ส่งให้ตรวจสอบแล้ว', 'review-pass': 'ผ่านการตรวจ – ส่งให้อนุมัติแล้ว',
+    'review-reject': 'ตีกลับให้แก้ไขแล้ว', approve: 'อนุมัติเรียบร้อย ✓', 'approve-reject': 'ตีกลับแล้ว', reopen: 'เปิดแก้ไขใหม่แล้ว' }[action];
+  toast(msg || 'บันทึกแล้ว');
+};
 
 /* ---------- ภาษี ---------- */
 // อัตรา SME คิดบนฐานกึ่งหนึ่งของประมาณการกำไรสุทธิทั้งปี
@@ -1015,6 +1183,13 @@ function pndSummaryHtml(r) {
   body += `<tr class="grand"><td>ภาษีที่ต้องชำระตามแบบ ภ.ง.ด.51</td><td class="amt">${fmt(payable)}</td></tr>`;
   if (r.netPay < 0) body += `<tr class="line"><td colspan="2" style="color:var(--green);font-size:.82rem">* ภาษีถูกหัก ณ ที่จ่ายเกินภาษีที่คำนวณได้ ${fmt(-r.netPay)} บาท — นำไปเครดิตต่อใน ภ.ง.ด.50</td></tr>`;
 
+  const wf = ensureWorkflow(activeCompany());
+  const stt = WF_STATUS[wf.status] || WF_STATUS.draft;
+  const signBox = (roleKey, roleLabel, assignedName) => {
+    const s = signoffFor(wf, roleKey);
+    if (s) return `<div class="sign-box"><div class="sig-line"></div>${roleLabel}<br><span class="sign-name">${escapeHtml(s.name)}</span><br><span class="signed-tag">✓ เซ็นแล้ว</span> <span class="sign-date">${fmtDateTime(s.at)}</span></div>`;
+    return `<div class="sign-box"><div class="sig-line"></div>${roleLabel}<br>${escapeHtml(assignedName || '')}</div>`;
+  };
   return `
     <div class="pnd-summary">
       <h3>แบบสรุปประมาณการภาษีเงินได้นิติบุคคลครึ่งปี (ภ.ง.ด.51)</h3>
@@ -1025,12 +1200,13 @@ function pndSummaryHtml(r) {
         ${c.jobCode ? '&nbsp;·&nbsp; <b>Job Code:</b> ' + escapeHtml(c.jobCode) : ''}<br>
         <b>รอบบัญชี:</b> ${escapeHtml(String(c.year))}${c.yearEnd ? ' (สิ้นรอบ ' + escapeHtml(c.yearEnd) + ')' : ''}
         &nbsp;·&nbsp; <b>ประเภทอัตราภาษี:</b> ${rateLabel}
+        &nbsp;·&nbsp; <b>สถานะ:</b> <span class="wf-badge ${stt.cls}" style="font-size:.76rem;padding:2px 10px">${stt.label}</span>
       </div>
       <table>${body}</table>
       <div class="sign-row">
-        <div class="sign-box"><div class="sig-line"></div>ผู้จัดทำ (Preparer)<br>${escapeHtml(c.preparer || '')}</div>
-        <div class="sign-box"><div class="sig-line"></div>ผู้ตรวจสอบ (Reviewer)<br>${escapeHtml(c.reviewer || '')}</div>
-        <div class="sign-box"><div class="sig-line"></div>ผู้อนุมัติ (Approver)<br>${escapeHtml(c.approver || '')}</div>
+        ${signBox('preparer', 'ผู้จัดทำ (Preparer)', c.preparer)}
+        ${signBox('reviewer', 'ผู้ตรวจสอบ (Reviewer)', c.reviewer)}
+        ${signBox('approver', 'ผู้อนุมัติ (Approver)', c.approver)}
       </div>
     </div>`;
 }
@@ -1179,6 +1355,8 @@ function buildPrintReport() {
     bracketRows = `<tr><td style="padding-left:24px">อัตรา 20% ของฐานภาษี</td><td class="amt">${fmt(r.tax)}</td></tr>`;
   }
   const payable = Math.max(r.netPay, 0);
+  const wfP = ensureWorkflow(activeCompany());
+  const wfSt = WF_STATUS[wfP.status] || WF_STATUS.draft;
 
   // งบทดลองเปรียบเทียบจากไฟล์ที่นำเข้า (ถ้ามี)
   let comparisonBox = '';
@@ -1214,6 +1392,7 @@ function buildPrintReport() {
   $('printReport').innerHTML = `
     <h1>สรุปประมาณการภาษีเงินได้นิติบุคคลครึ่งปี (ภ.ง.ด.51)</h1>
     <div class="sub-title">เอกสารประกอบการคำนวณภายใน — ไม่ใช่แบบแสดงรายการของกรมสรรพากร</div>
+    <div style="text-align:center; margin-bottom:12px; font-size:12px"><b>สถานะ:</b> ${wfSt.label}</div>
     <div class="box">
       <table>
         <tr><td style="width:32%"><b>ชื่อบริษัท</b></td><td>${c.name || '-'}${c.jobCode ? ' &nbsp;(Job Code: ' + c.jobCode + ')' : ''}</td></tr>
@@ -1241,11 +1420,16 @@ function buildPrintReport() {
       · กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
     </div>
     <div class="sign" style="justify-content:space-between">
-      <div class="line"><hr>ผู้จัดทำ (Preparer)<br>${c.preparer || ''}</div>
-      <div class="line"><hr>ผู้ตรวจสอบ (Reviewer)<br>${c.reviewer || ''}</div>
-      <div class="line"><hr>ผู้อนุมัติ (Approver)<br>${c.approver || ''}</div>
+      ${printSign('preparer', 'ผู้จัดทำ (Preparer)', c.preparer, wfP)}
+      ${printSign('reviewer', 'ผู้ตรวจสอบ (Reviewer)', c.reviewer, wfP)}
+      ${printSign('approver', 'ผู้อนุมัติ (Approver)', c.approver, wfP)}
     </div>
   `;
+}
+function printSign(roleKey, roleLabel, assignedName, wf) {
+  const s = signoffFor(wf, roleKey);
+  if (s) return `<div class="line"><hr><b>${escapeHtml(s.name)}</b><br>${roleLabel}<br><span style="color:#1e7d43">✓ เซ็นแล้ว ${fmtDateTime(s.at)}</span></div>`;
+  return `<div class="line"><hr>${roleLabel}<br>${escapeHtml(assignedName || '')}</div>`;
 }
 
 /* ---------- นำเข้างบทดลอง (Trial Balance) ---------- */
