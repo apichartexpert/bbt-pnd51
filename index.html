@@ -510,7 +510,7 @@
     <div id="wfActionArea">
       <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:6px">
         <div class="field">
-          <label>ผู้ดำเนินการ (เลือกจากฐานข้อมูลพนักงาน)</label>
+          <label>ผู้ดำเนินการ <span class="hint" id="wfActorHint"></span></label>
           <select id="wfActor"></select>
         </div>
         <div class="field">
@@ -859,8 +859,14 @@ function fmtDateTime(iso) {
   return d.toLocaleDateString('th-TH') + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 }
 function wfActorOptions(defaultName) {
+  const emps = (db.employees || []);
+  const names = emps.map(e => e.name);
   let opts = '<option value="">— เลือกผู้ดำเนินการ —</option>';
-  (db.employees || []).forEach(e => {
+  // ให้ผู้รับผิดชอบที่กำหนดไว้ (Preparer/Reviewer/Approver) อยู่บนสุดและถูกเลือกไว้เสมอ แม้ยังไม่อยู่ในฐานข้อมูลพนักงาน
+  if (defaultName && !names.includes(defaultName)) {
+    opts += `<option value="${escapeHtml(defaultName)}" selected>${escapeHtml(defaultName)}</option>`;
+  }
+  emps.forEach(e => {
     opts += `<option value="${escapeHtml(e.name)}"${e.name === defaultName ? ' selected' : ''}>${escapeHtml(e.name)}${e.role ? ' (' + escapeHtml(e.role) + ')' : ''}</option>`;
   });
   return opts;
@@ -878,10 +884,16 @@ function renderWorkflow() {
     ? `(ยอดที่ส่งตรวจ: ภาษีที่ต้องชำระ ${fmt(Math.max(wf.snapshot.netPay, 0))} บาท · ส่งเมื่อ ${fmtDateTime(wf.snapshot.at)})`
     : '';
 
+  const stepRole = wf.status === 'draft' ? 'ผู้จัดทำ (Preparer)'
+                 : wf.status === 'submitted' ? 'ผู้ตรวจสอบ (Reviewer)'
+                 : wf.status === 'reviewed' ? 'ผู้อนุมัติ (Approver)' : '';
   const defName = wf.status === 'draft' ? c.preparer
                 : wf.status === 'submitted' ? c.reviewer
                 : wf.status === 'reviewed' ? c.approver : '';
   $('wfActor').innerHTML = wfActorOptions(defName);
+  $('wfActorHint').textContent = stepRole
+    ? (defName ? `— ขั้นนี้: ${stepRole} = ${defName}` : `— ขั้นนี้: ${stepRole} (ยังไม่ได้กำหนดใน Section 1)`)
+    : '';
 
   let b = '';
   if (wf.status === 'draft') {
@@ -1334,11 +1346,23 @@ $('btnPrint').addEventListener('click', () => {
   let w = null;
   try { w = window.open('', '_blank'); } catch (e) { w = null; }
   if (w && w.document) {
+    // เปิดแท็บใหม่แล้วสั่งพิมพ์ (ใช้ได้บนเว็บไซต์จริง เช่น GitHub Pages / เปิดไฟล์โดยตรง)
     w.document.open(); w.document.write(doc); w.document.close();
   } else {
-    // เปิดหน้าต่างใหม่ไม่ได้ (มักเกิดในหน้าตัวอย่าง/แซนด์บ็อกซ์) — ลองพิมพ์จากหน้าเดิม แล้วแจ้งเตือน
-    try { window.print(); } catch (e) { /* บางสภาพแวดล้อมปิดการพิมพ์ */ }
-    toast('ถ้าไม่ขึ้นหน้าต่างพิมพ์ โปรดเปิดแอปบนเว็บไซต์จริง (เช่น GitHub Pages) หรือเปิดไฟล์ index.html โดยตรง แล้วสั่งพิมพ์อีกครั้ง');
+    // ป็อปอัปถูกบล็อก (เช่น ในแซนด์บ็อกซ์ของ Artifact) — ดาวน์โหลดไฟล์เอกสารให้เปิดพิมพ์เอง
+    try {
+      const blob = new Blob([doc], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `สรุป-ภงด51-${stamp()}.html`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      toast('ดาวน์โหลดไฟล์สรุปแล้ว — เปิดไฟล์ที่ดาวน์โหลด แล้วหน้าต่างพิมพ์จะขึ้นเอง (หรือกด Ctrl/Cmd+P)');
+    } catch (e) {
+      try { window.print(); } catch (e2) {
+        toast('ไม่สามารถพิมพ์ในหน้านี้ได้ โปรดเปิดแอปบนเว็บไซต์จริง (GitHub Pages) หรือเปิดไฟล์ index.html โดยตรง');
+      }
+    }
   }
 });
 
