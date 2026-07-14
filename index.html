@@ -1127,14 +1127,31 @@ const PRINT_CSS = `
   .sign { margin-top:40px; display:flex; justify-content:flex-end; gap:16px; }
   .sign .line { flex:1; max-width:220px; text-align:center; font-size:11px; }
   .sign .line hr { border:none; border-top:1px dotted #333; margin-bottom:4px; margin-top:36px; }
+  .cmp-title { font-weight:700; color:#123d78; margin-bottom:4px; font-size:12px; }
+  .cmp-meta { color:#5a6472; font-size:10px; margin-bottom:6px; }
+  table.pl { width:100%; border-collapse:collapse; font-size:9.5px; }
+  table.pl th, table.pl td { padding:3px 4px; border-bottom:1px solid #d6dde6; }
+  table.pl thead th { background:#e8f0fb; color:#123d78; text-align:right; white-space:nowrap; font-size:9px; }
+  table.pl thead th:first-child { text-align:left; }
+  table.pl thead th.grp { text-align:center; border-bottom:1px solid #1a56a7; }
+  table.pl td.name { text-align:left; white-space:nowrap; }
+  table.pl td.amt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  table.pl td.pct { text-align:right; color:#5a6472; font-size:9px; white-space:nowrap; }
+  table.pl tr.subtotal td { font-weight:700; background:#fafbfd; }
+  table.pl tr.net td { font-weight:800; border-top:1.5px solid #123d78; color:#123d78; background:#e8f0fb; }
+  table.pl td.neg, table.pl td.down { color:#c0392b; }
+  table.pl td.up { color:#1e7d43; }
   @media print { body { margin:8mm; } }
 `;
 $('btnPrint').addEventListener('click', () => {
   if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนสั่งพิมพ์'); return; }
   buildPrintReport();
   const inner = $('printReport').innerHTML;
+  // ถ้ามีตารางเปรียบเทียบ (กว้าง) ให้พิมพ์แนวนอนเพื่อไม่ให้ตกขอบ
+  const wide = !!(estimatePeriod() && $('plTable').innerHTML.trim());
+  const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 8mm; }`;
   const doc = '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">'
-    + '<title>สรุปแบบ ภ.ง.ด.51</title><style>' + PRINT_CSS + '</style></head><body>'
+    + '<title>สรุปแบบ ภ.ง.ด.51</title><style>' + PRINT_CSS + pageCss + '</style></head><body>'
     + inner
     + '<scr' + 'ipt>window.onload=function(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},300);};</scr' + 'ipt>'
     + '</body></html>';
@@ -1162,6 +1179,20 @@ function buildPrintReport() {
     bracketRows = `<tr><td style="padding-left:24px">อัตรา 20% ของฐานภาษี</td><td class="amt">${fmt(r.tax)}</td></tr>`;
   }
   const payable = Math.max(r.netPay, 0);
+
+  // งบทดลองเปรียบเทียบจากไฟล์ที่นำเข้า (ถ้ามี)
+  let comparisonBox = '';
+  if (estimatePeriod() && $('plTable').innerHTML.trim()) {
+    const parts = [];
+    if (parsedA) parts.push('A ปีก่อน: ' + (parsedA.company || '-') + (parsedA.period ? ' (' + parsedA.period + ')' : ''));
+    if (parsedB) parts.push('B ผลจริงครึ่งปี: ' + (parsedB.company || '-') + (parsedB.period ? ' (' + parsedB.period + ')' : ''));
+    if (parsedC) parts.push('C ประมาณการ: ' + (parsedC.company || '-') + (parsedC.period ? ' (' + parsedC.period + ')' : ''));
+    comparisonBox = `<div class="box" style="page-break-inside:avoid">
+      <div class="cmp-title">งบกำไรขาดทุนเปรียบเทียบจากงบทดลอง (Trial Balance)</div>
+      ${parts.length ? '<div class="cmp-meta">' + parts.map(escapeHtml).join(' &nbsp;·&nbsp; ') + '</div>' : ''}
+      ${$('plTable').outerHTML}
+    </div>`;
+  }
 
   let riskPrint = '';
   if (r.lastYear > 0 && r.taxableProfit < r.lastYear * 0.75) {
@@ -1203,6 +1234,7 @@ function buildPrintReport() {
       </table>
       ${riskPrint}
     </div>
+    ${comparisonBox}
     <div class="footer">
       จัดทำเมื่อ ${now.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}
       ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
