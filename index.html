@@ -168,6 +168,13 @@
   .assign-head { font-size: .82rem; font-weight: 700; color: var(--gray); margin: 16px 0 8px; padding-top: 12px; border-top: 1px dashed var(--border); }
   .sub-head { font-size: .9rem; font-weight: 700; color: var(--blue-dark); margin: 18px 0 8px; }
 
+  .emp-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: .88rem; }
+  .emp-item:last-child { border-bottom: none; }
+  .emp-item .en { font-weight: 600; }
+  .emp-item .er { color: var(--gray); font-size: .82rem; }
+  .emp-item .sp { flex: 1; }
+  .emp-empty { color: #9aa3ae; font-size: .85rem; padding: 6px 2px; }
+
   /* PND.51 summary front page */
   .pnd-summary { border: 1.5px solid var(--blue); border-radius: 10px; padding: 18px 20px; margin-top: 18px; background: #fff; }
   .pnd-summary h3 { text-align: center; color: var(--blue-dark); font-size: 1.05rem; margin-bottom: 2px; }
@@ -278,6 +285,12 @@
       <button class="btn-outline btn-sm" id="btnNewCompany" type="button">+ เพิ่มบริษัทใหม่</button>
       <button class="btn-danger-outline" id="btnDeleteCompany" type="button">ลบบริษัทนี้</button>
     </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn-outline btn-sm" id="btnExport" type="button">⭳ Export ข้อมูลทั้งหมด</button>
+      <button class="btn-outline btn-sm" id="btnExportOne" type="button">⭳ Export บริษัทนี้</button>
+      <button class="btn-outline btn-sm" id="btnImport" type="button">⭱ Import / เพิ่มบริษัทจากไฟล์</button>
+      <input type="file" id="importData" accept=".json,application/json" style="display:none">
+    </div>
     <div class="grid" style="margin-top:14px">
       <div class="field">
         <label>ชื่อบริษัท</label>
@@ -300,19 +313,35 @@
         <input type="text" id="coYearEnd" placeholder="31/12/2569">
       </div>
     </div>
-    <div class="assign-head">การจัดสรรผู้รับผิดชอบ (Preparer / Reviewer / Approver)</div>
+    <div class="assign-head">การจัดสรรผู้รับผิดชอบ (Preparer / Reviewer / Approver)
+      <button class="btn-outline btn-sm" id="btnManageEmp" type="button" style="float:right;font-weight:400">👤 จัดการฐานข้อมูลพนักงาน</button>
+    </div>
+    <div id="empPanel" style="display:none; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px">
+      <div class="company-bar" style="align-items:flex-end">
+        <div class="field">
+          <label>ชื่อพนักงาน</label>
+          <input type="text" id="empName" placeholder="เช่น สมชาย ใจดี">
+        </div>
+        <div class="field">
+          <label>ตำแหน่ง / แผนก <span class="hint">(ไม่บังคับ)</span></label>
+          <input type="text" id="empRole" placeholder="เช่น Senior Accountant">
+        </div>
+        <button class="btn-primary btn-sm" id="btnAddEmp" type="button">+ เพิ่มพนักงาน</button>
+      </div>
+      <div id="empList" style="margin-top:10px"></div>
+    </div>
     <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
       <div class="field">
         <label>ผู้จัดทำ (Preparer)</label>
-        <input type="text" id="coPreparer" placeholder="ชื่อผู้จัดทำ">
+        <select id="coPreparer"></select>
       </div>
       <div class="field">
         <label>ผู้ตรวจสอบ (Reviewer)</label>
-        <input type="text" id="coReviewer" placeholder="ชื่อผู้ตรวจสอบ">
+        <select id="coReviewer"></select>
       </div>
       <div class="field">
         <label>ผู้อนุมัติ (Approver)</label>
-        <input type="text" id="coApprover" placeholder="ชื่อผู้อนุมัติ">
+        <select id="coApprover"></select>
       </div>
     </div>
   </div>
@@ -522,6 +551,7 @@ function loadDB() {
     if (raw) db = JSON.parse(raw);
   } catch (e) { /* ข้อมูลเสีย เริ่มใหม่ */ }
   if (!Array.isArray(db.companies)) db.companies = [];
+  if (!Array.isArray(db.employees)) db.employees = [];
   if (db.companies.length === 0) {
     db.companies.push(newCompany());
     db.activeId = db.companies[0].id;
@@ -557,9 +587,7 @@ function loadCompanyToForm() {
   $('coYear').value = c.year;
   $('coJobCode').value = c.jobCode || '';
   $('coYearEnd').value = c.yearEnd || '';
-  $('coPreparer').value = c.preparer || '';
-  $('coReviewer').value = c.reviewer || '';
-  $('coApprover').value = c.approver || '';
+  populateAssignSelects();
   document.querySelector(`input[name="entityType"][value="${c.entityType}"]`).checked = true;
   syncRadioStyle();
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
@@ -611,6 +639,139 @@ function syncRadioStyle() {
 }
 document.querySelectorAll('input[name="entityType"]').forEach(r =>
   r.addEventListener('change', () => { syncRadioStyle(); saveCompanyFromForm(); }));
+
+/* ---------- ฐานข้อมูลพนักงาน & ผู้รับผิดชอบ ---------- */
+function assignSelectHtml(current) {
+  let opts = '<option value="">— ไม่ระบุ —</option>';
+  const names = [];
+  (db.employees || []).forEach(e => {
+    names.push(e.name);
+    opts += `<option value="${escapeHtml(e.name)}">${escapeHtml(e.name)}${e.role ? ' (' + escapeHtml(e.role) + ')' : ''}</option>`;
+  });
+  if (current && !names.includes(current)) opts += `<option value="${escapeHtml(current)}">${escapeHtml(current)}</option>`;
+  return opts;
+}
+function populateAssignSelects() {
+  const c = activeCompany();
+  [['coPreparer', c.preparer], ['coReviewer', c.reviewer], ['coApprover', c.approver]].forEach(([id, cur]) => {
+    cur = cur || '';
+    $(id).innerHTML = assignSelectHtml(cur);
+    $(id).value = cur;
+  });
+}
+function renderEmployeeList() {
+  const wrap = $('empList');
+  if (!db.employees || !db.employees.length) {
+    wrap.innerHTML = '<div class="emp-empty">ยังไม่มีพนักงานในฐานข้อมูล — เพิ่มด้านบนเพื่อใช้เลือกเป็นผู้รับผิดชอบ</div>';
+    return;
+  }
+  wrap.innerHTML = db.employees.map((e, i) =>
+    `<div class="emp-item"><span class="en">${escapeHtml(e.name)}</span>${e.role ? '<span class="er">— ' + escapeHtml(e.role) + '</span>' : ''}<span class="sp"></span>` +
+    `<button class="btn-danger-outline" type="button" onclick="deleteEmployee(${i})">ลบ</button></div>`
+  ).join('');
+}
+function refreshEmployeesUI() {
+  renderEmployeeList();
+  const c = activeCompany();               // เก็บค่าที่เลือกไว้ก่อน rebuild
+  c.preparer = $('coPreparer').value; c.reviewer = $('coReviewer').value; c.approver = $('coApprover').value;
+  populateAssignSelects();
+}
+$('btnManageEmp').addEventListener('click', () => {
+  const p = $('empPanel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+});
+$('btnAddEmp').addEventListener('click', () => {
+  const name = $('empName').value.trim();
+  const role = $('empRole').value.trim();
+  if (!name) { toast('กรุณากรอกชื่อพนักงาน'); $('empName').focus(); return; }
+  if (db.employees.some(e => e.name === name)) { toast('มีพนักงานชื่อนี้แล้ว'); return; }
+  db.employees.push({ name, role });
+  db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+  saveDB();
+  $('empName').value = ''; $('empRole').value = '';
+  refreshEmployeesUI();
+  toast('เพิ่มพนักงานแล้ว');
+});
+window.deleteEmployee = function (i) {
+  const e = db.employees[i];
+  if (!confirm(`ลบพนักงาน "${e.name}" ออกจากฐานข้อมูล?`)) return;
+  db.employees.splice(i, 1);
+  saveDB();
+  refreshEmployeesUI();
+};
+
+/* ---------- Export / Import ข้อมูล ---------- */
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function stamp() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+$('btnExport').addEventListener('click', () => {
+  saveCompanyFromForm();
+  downloadJSON({ _type: 'pnd51-data', version: 1, exportedAt: new Date().toISOString(),
+                companies: db.companies, employees: db.employees },
+              `pnd51-ข้อมูลทั้งหมด-${stamp()}.json`);
+  toast('ส่งออกข้อมูลทั้งหมดแล้ว');
+});
+$('btnExportOne').addEventListener('click', () => {
+  saveCompanyFromForm();
+  const c = activeCompany();
+  downloadJSON({ _type: 'pnd51-data', version: 1, exportedAt: new Date().toISOString(),
+                companies: [c], employees: db.employees },
+              `pnd51-${(c.name || 'บริษัท').replace(/[\\/:*?"<>|]/g, '')}-${stamp()}.json`);
+  toast('ส่งออกข้อมูลบริษัทนี้แล้ว');
+});
+$('btnImport').addEventListener('click', () => $('importData').click());
+$('importData').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      const incoming = Array.isArray(data.companies) ? data.companies
+                     : (data.id && data.name !== undefined ? [data] : null);
+      if (!incoming) throw new Error('ไฟล์ไม่ถูกต้อง — ไม่พบข้อมูลบริษัท');
+      let added = 0, updated = 0;
+      incoming.forEach(ic => {
+        if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
+        // ป้องกันข้อมูลไม่ครบ
+        if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
+        if (!Array.isArray(ic.history)) ic.history = [];
+        const idx = db.companies.findIndex(x => x.id === ic.id);
+        if (idx >= 0) { db.companies[idx] = ic; updated++; }
+        else { db.companies.push(ic); added++; }
+      });
+      // รวมพนักงาน (ไม่ซ้ำชื่อ)
+      let empAdded = 0;
+      if (Array.isArray(data.employees)) {
+        data.employees.forEach(emp => {
+          if (emp && emp.name && !db.employees.some(x => x.name === emp.name)) {
+            db.employees.push({ name: emp.name, role: emp.role || '' }); empAdded++;
+          }
+        });
+        db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      }
+      if (added && incoming.length) db.activeId = incoming[incoming.length - 1].id;
+      saveDB();
+      renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
+      toast(`นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`);
+    } catch (err) {
+      toast('นำเข้าไม่สำเร็จ: ' + (err.message || err));
+    }
+    $('importData').value = '';
+  };
+  reader.readAsText(file);
+});
 
 /* ---------- ภาษี ---------- */
 // อัตรา SME คิดบนฐานกึ่งหนึ่งของประมาณการกำไรสุทธิทั้งปี
@@ -1260,6 +1421,7 @@ $('btnToggleDetail').addEventListener('click', () => {
 loadDB();
 renderCompanySelect();
 loadCompanyToForm();
+renderEmployeeList();
 </script>
 </body>
 </html>
