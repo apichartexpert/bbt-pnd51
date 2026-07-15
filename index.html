@@ -440,6 +440,31 @@
       <div id="detailWrap" style="display:none; margin-top:14px"></div>
       <p class="note">การจัดกลุ่มใช้เลขผังบัญชี: ขึ้นต้น 4 = รายได้ · 51 = ต้นทุนขาย · 58 = ดอกเบี้ยจ่าย · 59 = ภาษีเงินได้ (ไม่รวมในกำไรก่อนภาษี) · 5x อื่น ๆ = ค่าใช้จ่าย SGA · บัญชีหมวด 1–3 (งบแสดงฐานะการเงิน) ไม่นำมาคำนวณ กำไร/ขาดทุน</p>
     </div>
+
+    <div class="sub-head">ข้อมูลภาษีปีก่อน (จาก ภ.ง.ด.50) — สำหรับเปรียบเทียบ</div>
+    <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="field">
+        <label>บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย (บาท)</label>
+        <input type="text" class="num" id="inPYAddBack" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>หัก รายได้ที่ได้รับการยกเว้น (บาท)</label>
+        <input type="text" class="num" id="inPYExempt" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ภาษีเงินได้นิติบุคคล (บาท)</label>
+        <input type="text" class="num" id="inPYCit" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ภาษีถูกหัก ณ ที่จ่าย (บาท)</label>
+        <input type="text" class="num" id="inPYWht" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ภาษีเงินได้นิติบุคคลที่ต้องชำระ (บาท) <span class="hint">— เว้นว่างได้ (จะคำนวณ CIT − WHT ให้)</span></label>
+        <input type="text" class="num" id="inPYPayable" placeholder="0.00">
+      </div>
+    </div>
+    <div id="pyTaxDisplay"></div>
   </div>
 
   <!-- ===== ตัวเลขประมาณการ & ปรับปรุงทางภาษี ===== -->
@@ -632,8 +657,13 @@ function newCompany() {
            name: '', taxId: '', year: new Date().getFullYear() + 543,
            jobCode: '', yearEnd: '', preparer: '', reviewer: '', approver: '',
            lossCarry: [0, 0, 0, 0, 0],
+           priorYearTax: { addBack: 0, exempt: 0, cit: 0, wht: 0, payable: 0 },
            entityType: 'sme', history: [],
            workflow: { status: 'draft', snapshot: null, log: [] } };
+}
+function ensurePriorYearTax(c) {
+  if (!c.priorYearTax || typeof c.priorYearTax !== 'object') c.priorYearTax = { addBack: 0, exempt: 0, cit: 0, wht: 0, payable: 0 };
+  return c.priorYearTax;
 }
 function activeCompany() { return db.companies.find(c => c.id === db.activeId); }
 function ensureWorkflow(c) {
@@ -666,9 +696,14 @@ function loadCompanyToForm() {
   document.querySelector(`input[name="entityType"][value="${c.entityType}"]`).checked = true;
   syncRadioStyle();
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
+  const py = ensurePriorYearTax(c);
+  const setPY = (id, v) => { $(id).value = v ? fmt(v) : ''; };
+  setPY('inPYAddBack', py.addBack); setPY('inPYExempt', py.exempt);
+  setPY('inPYCit', py.cit); setPY('inPYWht', py.wht); setPY('inPYPayable', py.payable);
   renderLossTable();
   renderHistory();
   renderWorkflow();
+  renderPriorYearTax();
   $('resultCard').style.display = 'none';
 }
 function saveCompanyFromForm() {
@@ -682,6 +717,10 @@ function saveCompanyFromForm() {
   c.reviewer = $('coReviewer').value.trim();
   c.approver = $('coApprover').value.trim();
   c.entityType = document.querySelector('input[name="entityType"]:checked').value;
+  const py = ensurePriorYearTax(c);
+  py.addBack = parseNum($('inPYAddBack').value); py.exempt = parseNum($('inPYExempt').value);
+  py.cit = parseNum($('inPYCit').value); py.wht = parseNum($('inPYWht').value);
+  py.payable = parseNum($('inPYPayable').value);
   saveDB();
   renderCompanySelect();
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
@@ -707,6 +746,8 @@ $('btnDeleteCompany').addEventListener('click', () => {
 });
 ['coName', 'coTaxId', 'coYear', 'coJobCode', 'coYearEnd', 'coPreparer', 'coReviewer', 'coApprover']
   .forEach(id => $(id).addEventListener('change', () => { saveCompanyFromForm(); renderLossTable(); }));
+['inPYAddBack', 'inPYExempt', 'inPYCit', 'inPYWht', 'inPYPayable']
+  .forEach(id => $(id).addEventListener('change', () => { saveCompanyFromForm(); renderPriorYearTax(); }));
 
 function syncRadioStyle() {
   document.querySelectorAll('#entityTypeRow label').forEach(l => {
@@ -1732,6 +1773,33 @@ function renderCompare() {
   const estSrc = parsedC ? 'C' : (parsedB ? 'B' : 'A');
   $('btnUseEst').textContent = `↑ ใช้ประมาณการทั้งปี (${estSrc} ปัดพัน) เป็นประมาณการกำไร`;
   renderDetail();
+  renderPriorYearTax();
+}
+
+// สรุปข้อมูลภาษีปีก่อน (ภ.ง.ด.50) — รวมกำไรบัญชีจากงบทดลองงวด A ถ้ามี
+function renderPriorYearTax() {
+  const c = activeCompany();
+  const py = ensurePriorYearTax(c);
+  const wrap = $('pyTaxDisplay');
+  const accProfit = parsedA ? parsedA.netProfit : null;
+  const hasAny = (accProfit !== null) || py.addBack || py.exempt || py.cit || py.wht || py.payable;
+  if (!hasAny) {
+    wrap.innerHTML = '<p class="note" style="margin-top:8px">กรอกข้อมูลภาษีปีก่อน หรือ นำเข้างบทดลองงวด A (ปีก่อน) เพื่อแสดงสรุปเปรียบเทียบ</p>';
+    return;
+  }
+  const taxable = (accProfit || 0) + py.addBack - py.exempt;
+  const payable = py.payable || Math.max(py.cit - py.wht, 0);
+  const R = (label, val, cls) => `<tr class="${cls || ''}"><td>${label}</td><td class="amt">${fmt(val)}</td></tr>`;
+  const Rneg = (label, val) => `<tr class="sub"><td>${label}</td><td class="amt">(${fmt(val)})</td></tr>`;
+  let rows = '';
+  if (accProfit !== null) rows += R('กำไร(ขาดทุน)สุทธิทางบัญชีปีก่อน (จากงบทดลอง A)', accProfit);
+  if (py.addBack) rows += `<tr class="sub"><td>บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย</td><td class="amt">${fmt(py.addBack)}</td></tr>`;
+  if (py.exempt) rows += Rneg('หัก รายได้ที่ได้รับการยกเว้น', py.exempt);
+  if (accProfit !== null || py.addBack || py.exempt) rows += `<tr><td><b>กำไรสุทธิเพื่อเสียภาษีปีก่อน</b></td><td class="amt">${fmt(taxable)}</td></tr>`;
+  rows += `<tr><td>ภาษีเงินได้นิติบุคคล (CIT)</td><td class="amt">${fmt(py.cit)}</td></tr>`;
+  if (py.wht) rows += Rneg('หัก ภาษีถูกหัก ณ ที่จ่าย', py.wht);
+  rows += `<tr class="total"><td>ภาษีเงินได้นิติบุคคลที่ต้องชำระ (ปีก่อน)</td><td class="amt">${fmt(payable)}</td></tr>`;
+  wrap.innerHTML = `<div style="overflow-x:auto"><table class="calc" style="margin-top:8px">${rows}</table></div>`;
 }
 
 function estLabel(p) {
