@@ -200,6 +200,18 @@
   .sign-name { font-weight: 600; }
   .sign-date { color: var(--gray); font-size: .78rem; }
 
+  /* print preview overlay */
+  #printOverlay { position: fixed; inset: 0; z-index: 9999; background: rgba(20,26,34,.72);
+    display: flex; flex-direction: column; padding: 12px; gap: 10px; }
+  #printOverlay .po-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: #fff; border-radius: 10px; padding: 10px 14px; }
+  #printOverlay .po-title { font-weight: 700; color: var(--blue-dark); }
+  #printOverlay .po-spacer { flex: 1; }
+  #printOverlay .po-hint { background: var(--amber-light); color: #6e4a12; border-radius: 8px;
+    padding: 8px 14px; font-size: .82rem; }
+  #printOverlay .po-paper { flex: 1; background: #fff; border-radius: 10px; overflow: auto; padding: 10px; }
+  #printOverlay iframe { width: 100%; height: 100%; min-height: 60vh; border: 1px solid var(--border); background: #fff; }
+
   /* PND.51 summary front page */
   .pnd-summary { border: 1.5px solid var(--blue); border-radius: 10px; padding: 18px 20px; margin-top: 18px; background: #fff; }
   .pnd-summary h3 { text-align: center; color: var(--blue-dark); font-size: 1.05rem; margin-bottom: 2px; }
@@ -492,7 +504,7 @@
     <div id="pndSummary"></div>
     <div class="btn-row">
       <button class="btn-primary" id="btnSave" type="button">💾 บันทึกผลสรุป</button>
-      <button class="btn-outline" id="btnPrint" type="button">🖨 พิมพ์สรุปแบบ ภ.ง.ด.51</button>
+      <button class="btn-outline" id="btnPrint" type="button">🖨 ดูตัวอย่าง / พิมพ์สรุป ภ.ง.ด.51</button>
       <button class="btn-outline" id="btnDownloadPrint" type="button">⬇ ดาวน์โหลดไฟล์สรุป (.html)</button>
     </div>
     <p class="note">กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
@@ -1382,17 +1394,52 @@ function downloadPrintFile() {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
   toast('ดาวน์โหลดไฟล์สรุปแล้ว — เปิดไฟล์ที่ดาวน์โหลด หน้าต่างพิมพ์จะขึ้นเอง (หรือกด Ctrl/Cmd+P)');
 }
-$('btnPrint').addEventListener('click', () => {
-  if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนสั่งพิมพ์'); return; }
+// พิมพ์ตรง ๆ (เปิดแท็บใหม่) — ใช้ได้บนเว็บไซต์จริง; ถ้าถูกบล็อกจะคืน false
+function tryOpenPrintTab() {
   const doc = makePrintDoc(true);
   let w = null;
   try { w = window.open('', '_blank'); } catch (e) { w = null; }
   if (w && w.document) {
-    try { w.document.open(); w.document.write(doc); w.document.close(); return; }
+    try { w.document.open(); w.document.write(doc); w.document.close(); return true; }
     catch (e) { try { w.close(); } catch (e2) {} }
   }
-  // เปิดแท็บใหม่ไม่ได้ (เช่น แซนด์บ็อกซ์ของ Artifact) — ดาวน์โหลดไฟล์ให้เปิดพิมพ์แทน
-  downloadPrintFile();
+  return false;
+}
+// แสดงตัวอย่างเอกสารในหน้า (แสดงได้เสมอ แม้อยู่ในแซนด์บ็อกซ์ที่บล็อกป็อปอัป/ดาวน์โหลด)
+function showPrintOverlay() {
+  const doc = makePrintDoc(false);
+  let ov = document.getElementById('printOverlay');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'printOverlay';
+  ov.innerHTML =
+    '<div class="po-bar">'
+    + '<span class="po-title">ตัวอย่างเอกสาร ภ.ง.ด.51 (1 หน้า)</span>'
+    + '<span class="po-spacer"></span>'
+    + '<button class="btn-primary btn-sm" id="poPrint" type="button">🖨 พิมพ์ / บันทึก PDF</button>'
+    + '<button class="btn-outline btn-sm" id="poDownload" type="button">⬇ ดาวน์โหลด HTML</button>'
+    + '<button class="btn-outline btn-sm" id="poClose" type="button">✕ ปิด</button>'
+    + '</div>'
+    + '<div class="po-hint">กด “พิมพ์ / บันทึก PDF” เพื่อสั่งพิมพ์ · หากอยู่ในหน้าตัวอย่าง (Artifact) แล้วปุ่มไม่ทำงาน ให้แคปหน้าจอเอกสารด้านล่าง หรือเปิดแอปบนเว็บไซต์จริง (GitHub Pages) เพื่อพิมพ์เต็มรูปแบบ</div>'
+    + '<div class="po-paper"><iframe id="poFrame" title="print-preview"></iframe></div>';
+  document.body.appendChild(ov);
+  document.getElementById('poFrame').srcdoc = doc;
+  document.getElementById('poClose').onclick = () => ov.remove();
+  document.getElementById('poDownload').onclick = () => downloadPrintFile();
+  document.getElementById('poPrint').onclick = () => {
+    // 1) พิมพ์เนื้อหาในกรอบตัวอย่าง (ได้ผลบนเว็บไซต์จริง)
+    try { const w = document.getElementById('poFrame').contentWindow; w.focus(); w.print(); return; } catch (e) {}
+    // 2) เปิดแท็บใหม่แล้วพิมพ์
+    if (tryOpenPrintTab()) return;
+    // 3) พิมพ์ทั้งหน้า
+    try { window.print(); return; } catch (e) {}
+    toast('พิมพ์ไม่ได้ในหน้านี้ — กด “ดาวน์โหลด HTML” หรือแคปหน้าจอเอกสาร แล้วพิมพ์ภายหลัง');
+  };
+}
+$('btnPrint').addEventListener('click', () => {
+  if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนสั่งพิมพ์'); return; }
+  // แสดงตัวอย่างในหน้าเสมอ (แสดงได้ทุกสภาพแวดล้อม) แล้วสั่งพิมพ์จากปุ่มในตัวอย่าง
+  showPrintOverlay();
 });
 $('btnDownloadPrint').addEventListener('click', () => {
   if (!lastResult) { toast('กรุณาคำนวณภาษีก่อนดาวน์โหลด'); return; }
