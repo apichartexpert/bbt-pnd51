@@ -166,6 +166,8 @@
     padding-top: 12px;
   }
   table.calc tr.total td.amt { color: var(--blue-dark); }
+  table.calc th { padding: 8px 6px; font-size: .8rem; color: var(--gray); border-bottom: 1px solid var(--border); }
+  table.calc th.amt { text-align: right; white-space: nowrap; }
   .result-final {
     margin-top: 16px;
     border-radius: 10px;
@@ -393,6 +395,11 @@
         <button class="btn-primary btn-sm" id="btnAddEmp" type="button">+ เพิ่มพนักงาน</button>
       </div>
       <div id="empList" style="margin-top:10px"></div>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn-outline btn-sm" id="btnExportEmp" type="button">⭳ Export พนักงาน/ผู้รับผิดชอบ</button>
+        <button class="btn-outline btn-sm" id="btnImportEmp" type="button">⭱ Import พนักงาน/ผู้รับผิดชอบ</button>
+      </div>
+      <p class="note" style="margin-top:6px">Import รับได้ทั้งไฟล์พนักงานล้วน และไฟล์ข้อมูลบริษัท (จะดึงพนักงาน + ผู้รับผิดชอบที่กำหนดไว้มาให้)</p>
     </div>
     <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
       <div class="field">
@@ -479,16 +486,31 @@
         <input type="text" class="num" id="inPYExempt" placeholder="0.00">
       </div>
       <div class="field">
-        <label>ภาษีเงินได้นิติบุคคล (บาท)</label>
-        <input type="text" class="num" id="inPYCit" placeholder="0.00">
+        <label>ขาดทุนสะสมยกมาที่ใช้ ปีก่อน (บาท)</label>
+        <input type="text" class="num" id="inPYLossUsed" placeholder="0.00">
       </div>
       <div class="field">
-        <label>ภาษีถูกหัก ณ ที่จ่าย (บาท)</label>
+        <label>ภาษีถูกหัก ณ ที่จ่าย ปีก่อน (บาท)</label>
         <input type="text" class="num" id="inPYWht" placeholder="0.00">
       </div>
       <div class="field">
-        <label>ภาษีเงินได้นิติบุคคลที่ต้องชำระ (บาท) <span class="hint">— เว้นว่างได้ (จะคำนวณ CIT − WHT ให้)</span></label>
+        <label>ภาษีเงินได้นิติบุคคล ปีก่อน (บาท) <span class="hint">— เว้นว่างได้ (จะคำนวณจากงบทดลอง A ให้)</span></label>
+        <input type="text" class="num" id="inPYCit" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ภาษีที่ต้องชำระ ปีก่อน (บาท) <span class="hint">— เว้นว่างได้ (จะคำนวณ CIT − WHT ให้)</span></label>
         <input type="text" class="num" id="inPYPayable" placeholder="0.00">
+      </div>
+    </div>
+    <div class="sub-head">ข้อมูลภาษีปีปัจจุบัน <span class="hint" style="font-weight:400">— ซิงค์กับส่วนที่ 4 (กรอกที่ไหนก็ได้)</span></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="field">
+        <label>ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก (บาท)</label>
+        <input type="text" class="num" id="inCYWht" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ขาดทุนสะสมยกมาที่ใช้ ปีปัจจุบัน (บาท) <span class="hint">— ตารางขาดทุนสะสมอยู่ส่วนที่ 4</span></label>
+        <input type="text" class="num" id="inCYLossUsed" placeholder="0.00">
       </div>
     </div>
     <div id="pyTaxDisplay"></div>
@@ -684,12 +706,13 @@ function newCompany() {
            name: '', taxId: '', year: new Date().getFullYear() + 543,
            jobCode: '', yearEnd: '', preparer: '', reviewer: '', approver: '',
            lossCarry: [0, 0, 0, 0, 0],
-           priorYearTax: { addBack: 0, exempt: 0, cit: 0, wht: 0, payable: 0 },
+           priorYearTax: { addBack: 0, exempt: 0, lossUsed: 0, cit: 0, wht: 0, payable: 0 },
            entityType: 'sme', history: [],
            workflow: { status: 'draft', snapshot: null, log: [] } };
 }
 function ensurePriorYearTax(c) {
-  if (!c.priorYearTax || typeof c.priorYearTax !== 'object') c.priorYearTax = { addBack: 0, exempt: 0, cit: 0, wht: 0, payable: 0 };
+  if (!c.priorYearTax || typeof c.priorYearTax !== 'object') c.priorYearTax = { addBack: 0, exempt: 0, lossUsed: 0, cit: 0, wht: 0, payable: 0 };
+  if (c.priorYearTax.lossUsed === undefined) c.priorYearTax.lossUsed = 0;
   return c.priorYearTax;
 }
 function activeCompany() { return db.companies.find(c => c.id === db.activeId); }
@@ -725,8 +748,9 @@ function loadCompanyToForm() {
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
   const py = ensurePriorYearTax(c);
   const setPY = (id, v) => { $(id).value = v ? fmt(v) : ''; };
-  setPY('inPYAddBack', py.addBack); setPY('inPYExempt', py.exempt);
+  setPY('inPYAddBack', py.addBack); setPY('inPYExempt', py.exempt); setPY('inPYLossUsed', py.lossUsed);
   setPY('inPYCit', py.cit); setPY('inPYWht', py.wht); setPY('inPYPayable', py.payable);
+  syncCYFields();
   renderLossTable();
   renderHistory();
   renderWorkflow();
@@ -746,6 +770,7 @@ function saveCompanyFromForm() {
   c.entityType = document.querySelector('input[name="entityType"]:checked').value;
   const py = ensurePriorYearTax(c);
   py.addBack = parseNum($('inPYAddBack').value); py.exempt = parseNum($('inPYExempt').value);
+  py.lossUsed = parseNum($('inPYLossUsed').value);
   py.cit = parseNum($('inPYCit').value); py.wht = parseNum($('inPYWht').value);
   py.payable = parseNum($('inPYPayable').value);
   saveDB();
@@ -773,8 +798,27 @@ $('btnDeleteCompany').addEventListener('click', () => {
 });
 ['coName', 'coTaxId', 'coYear', 'coJobCode', 'coYearEnd', 'coPreparer', 'coReviewer', 'coApprover']
   .forEach(id => $(id).addEventListener('change', () => { saveCompanyFromForm(); renderLossTable(); }));
-['inPYAddBack', 'inPYExempt', 'inPYCit', 'inPYWht', 'inPYPayable']
+['inPYAddBack', 'inPYExempt', 'inPYLossUsed', 'inPYCit', 'inPYWht', 'inPYPayable']
   .forEach(id => $(id).addEventListener('change', () => { saveCompanyFromForm(); renderPriorYearTax(); }));
+
+// ---- ซิงค์ช่องปีปัจจุบัน (ส่วนที่ 3) ↔ ช่องคำนวณ (ส่วนที่ 4) — กรอกที่ไหนก็ได้ ----
+function syncCYFields() {
+  const cp = v => v.trim() === '' ? '' : fmt(parseNum(v));
+  $('inCYWht').value = cp($('inWht').value);
+  $('inCYLossUsed').value = cp($('inLossUsed').value);
+}
+$('inCYWht').addEventListener('change', () => {
+  $('inWht').value = $('inCYWht').value.trim() === '' ? '' : fmt(parseNum($('inCYWht').value));
+  $('inCYWht').value = $('inWht').value;
+  renderPriorYearTax();
+});
+$('inCYLossUsed').addEventListener('change', () => {
+  $('inLossUsed').value = $('inCYLossUsed').value.trim() === '' ? '' : fmt(parseNum($('inCYLossUsed').value));
+  $('inCYLossUsed').value = $('inLossUsed').value;
+  renderPriorYearTax();
+});
+['inWht', 'inLossUsed', 'inProfit', 'inAddBack', 'inExempt']
+  .forEach(id => $(id).addEventListener('change', () => { syncCYFields(); renderPriorYearTax(); }));
 
 function syncRadioStyle() {
   document.querySelectorAll('#entityTypeRow label').forEach(l => {
@@ -877,6 +921,13 @@ function exportCompany() {
 window.exportCompany = exportCompany;
 $('btnExportOne').addEventListener('click', exportCompany);
 $('btnImport').addEventListener('click', () => $('importData').click());
+$('btnExportEmp').addEventListener('click', () => {
+  downloadJSON({ _type: 'pnd51-employees', version: 1, exportedAt: new Date().toISOString(),
+                employees: db.employees },
+              `pnd51-พนักงาน-${stamp()}.json`);
+  toast('ส่งออกฐานข้อมูลพนักงาน/ผู้รับผิดชอบแล้ว');
+});
+$('btnImportEmp').addEventListener('click', () => $('importData').click());
 $('importData').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
@@ -886,31 +937,39 @@ $('importData').addEventListener('change', e => {
       const data = JSON.parse(ev.target.result);
       const incoming = Array.isArray(data.companies) ? data.companies
                      : (data.id && data.name !== undefined ? [data] : null);
-      if (!incoming) throw new Error('ไฟล์ไม่ถูกต้อง — ไม่พบข้อมูลบริษัท');
-      let added = 0, updated = 0;
-      incoming.forEach(ic => {
-        if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
-        // ป้องกันข้อมูลไม่ครบ
-        if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
-        if (!Array.isArray(ic.history)) ic.history = [];
-        const idx = db.companies.findIndex(x => x.id === ic.id);
-        if (idx >= 0) { db.companies[idx] = ic; updated++; }
-        else { db.companies.push(ic); added++; }
-      });
+      const hasEmp = Array.isArray(data.employees);
+      if (!incoming && !hasEmp) throw new Error('ไฟล์ไม่ถูกต้อง — ไม่พบข้อมูลบริษัทหรือพนักงาน');
       // รวมพนักงาน (ไม่ซ้ำชื่อ)
+      const mergeEmp = (name, role) => {
+        if (name && !db.employees.some(x => x.name === name)) {
+          db.employees.push({ name, role: role || '' });
+          return 1;
+        }
+        return 0;
+      };
       let empAdded = 0;
-      if (Array.isArray(data.employees)) {
-        data.employees.forEach(emp => {
-          if (emp && emp.name && !db.employees.some(x => x.name === emp.name)) {
-            db.employees.push({ name: emp.name, role: emp.role || '' }); empAdded++;
-          }
+      if (hasEmp) data.employees.forEach(emp => { if (emp) empAdded += mergeEmp(emp.name, emp.role); });
+      let added = 0, updated = 0;
+      if (incoming) {
+        incoming.forEach(ic => {
+          if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
+          // ป้องกันข้อมูลไม่ครบ
+          if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
+          if (!Array.isArray(ic.history)) ic.history = [];
+          const idx = db.companies.findIndex(x => x.id === ic.id);
+          if (idx >= 0) { db.companies[idx] = ic; updated++; }
+          else { db.companies.push(ic); added++; }
+          // ผู้รับผิดชอบที่กำหนดไว้ในบริษัทที่นำเข้า → เพิ่มเข้าฐานพนักงานให้อัตโนมัติ
+          empAdded += mergeEmp(ic.preparer) + mergeEmp(ic.reviewer) + mergeEmp(ic.approver);
         });
-        db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+        if (added && incoming.length) db.activeId = incoming[incoming.length - 1].id;
       }
-      if (added && incoming.length) db.activeId = incoming[incoming.length - 1].id;
+      db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
       saveDB();
       renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
-      toast(`นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`);
+      toast(incoming
+        ? `นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`
+        : `นำเข้าพนักงาน/ผู้รับผิดชอบสำเร็จ: เพิ่ม ${empAdded} คน`);
     } catch (err) {
       toast('นำเข้าไม่สำเร็จ: ' + (err.message || err));
     }
@@ -1803,30 +1862,70 @@ function renderCompare() {
   renderPriorYearTax();
 }
 
-// สรุปข้อมูลภาษีปีก่อน (ภ.ง.ด.50) — รวมกำไรบัญชีจากงบทดลองงวด A ถ้ามี
+// คำนวณภาษีปีก่อน (ภ.ง.ด.50 — เต็มปี) จากงบทดลอง A + ข้อมูลที่กรอก
+function computePriorYearTax() {
+  const c = activeCompany();
+  const py = ensurePriorYearTax(c);
+  const accProfit = parsedA ? parsedA.netProfit : null;
+  const taxableBeforeLoss = (accProfit || 0) + py.addBack - py.exempt;
+  const lossUsed = Math.max(0, Math.min(py.lossUsed, Math.max(taxableBeforeLoss, 0)));
+  const taxable = taxableBeforeLoss - lossUsed;
+  // ภาษีปีก่อนเป็นภาษีทั้งปี (ไม่หารครึ่ง) — ใช้เมื่อไม่ได้กรอก CIT เอง และมีงบ A ให้คำนวณ
+  const citComputed = (accProfit !== null) ? estimateTaxOn(Math.max(taxable, 0), c.entityType) : 0;
+  const cit = py.cit > 0 ? py.cit : citComputed;
+  const citIsComputed = !(py.cit > 0) && accProfit !== null;
+  const payable = py.payable > 0 ? py.payable : Math.max(cit - py.wht, 0);
+  return { accProfit, addBack: py.addBack, exempt: py.exempt, lossUsed, taxable, cit, citIsComputed, wht: py.wht, payable };
+}
+// คำนวณปีปัจจุบัน (ประมาณการ ภ.ง.ด.51) แบบสด จากช่องกรอกส่วนที่ 4 — ไม่แตะ lastResult
+function computeCurrentPreview() {
+  const c = activeCompany();
+  const profit = parseNum($('inProfit').value);
+  const addBack = parseNum($('inAddBack').value);
+  const exempt = parseNum($('inExempt').value);
+  const wht = parseNum($('inWht').value);
+  const taxableBeforeLoss = profit + addBack - exempt;
+  const lossUsed = Math.max(0, Math.min(parseNum($('inLossUsed').value), lossAvailable(), Math.max(taxableBeforeLoss, 0)));
+  const taxable = taxableBeforeLoss - lossUsed;
+  const half = Math.max(taxable, 0) / 2;
+  const tax = estimateTaxOn(half, c.entityType);
+  return { profit, addBack, exempt, lossUsed, taxable, half, tax, wht, payable: Math.max(tax - wht, 0),
+           hasData: $('inProfit').value.trim() !== '' };
+}
+// ตารางเปรียบเทียบภาษี ปีก่อน (เต็มปี) vs ปีปัจจุบัน (ประมาณการครึ่งปี)
 function renderPriorYearTax() {
   const c = activeCompany();
   const py = ensurePriorYearTax(c);
   const wrap = $('pyTaxDisplay');
-  const accProfit = parsedA ? parsedA.netProfit : null;
-  const hasAny = (accProfit !== null) || py.addBack || py.exempt || py.cit || py.wht || py.payable;
-  if (!hasAny) {
-    wrap.innerHTML = '<p class="note" style="margin-top:8px">กรอกข้อมูลภาษีปีก่อน หรือ นำเข้างบทดลองงวด A (ปีก่อน) เพื่อแสดงสรุปเปรียบเทียบ</p>';
+  const P = computePriorYearTax();
+  const N = computeCurrentPreview();
+  const hasPY = (P.accProfit !== null) || py.addBack || py.exempt || py.lossUsed || py.cit || py.wht || py.payable;
+  if (!hasPY && !N.hasData) {
+    wrap.innerHTML = '<p class="note" style="margin-top:8px">กรอกข้อมูลภาษี หรือ นำเข้างบทดลองงวด A (ปีก่อน) เพื่อแสดงตารางเปรียบเทียบภาษีปีก่อน/ปีปัจจุบัน</p>';
     return;
   }
-  const taxable = (accProfit || 0) + py.addBack - py.exempt;
-  const payable = py.payable || Math.max(py.cit - py.wht, 0);
-  const R = (label, val, cls) => `<tr class="${cls || ''}"><td>${label}</td><td class="amt">${fmt(val)}</td></tr>`;
-  const Rneg = (label, val) => `<tr class="sub"><td>${label}</td><td class="amt">(${fmt(val)})</td></tr>`;
+  const F = v => (v === null || v === undefined) ? '–' : fmt(v);
+  const Fn = v => (v === null || v === undefined) ? '–' : (v ? '(' + fmt(v) + ')' : fmt(0));
+  const pyProfit = P.accProfit;
+  const cyProfit = N.hasData ? N.profit : null;
   let rows = '';
-  if (accProfit !== null) rows += R('กำไร(ขาดทุน)สุทธิทางบัญชีปีก่อน (จากงบทดลอง A)', accProfit);
-  if (py.addBack) rows += `<tr class="sub"><td>บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย</td><td class="amt">${fmt(py.addBack)}</td></tr>`;
-  if (py.exempt) rows += Rneg('หัก รายได้ที่ได้รับการยกเว้น', py.exempt);
-  if (accProfit !== null || py.addBack || py.exempt) rows += `<tr><td><b>กำไรสุทธิเพื่อเสียภาษีปีก่อน</b></td><td class="amt">${fmt(taxable)}</td></tr>`;
-  rows += `<tr><td>ภาษีเงินได้นิติบุคคล (CIT)</td><td class="amt">${fmt(py.cit)}</td></tr>`;
-  if (py.wht) rows += Rneg('หัก ภาษีถูกหัก ณ ที่จ่าย', py.wht);
-  rows += `<tr class="total"><td>ภาษีเงินได้นิติบุคคลที่ต้องชำระ (ปีก่อน)</td><td class="amt">${fmt(payable)}</td></tr>`;
-  wrap.innerHTML = `<div style="overflow-x:auto"><table class="calc" style="margin-top:8px">${rows}</table></div>`;
+  rows += `<thead><tr><th style="text-align:left">รายการ</th><th class="amt">ปีก่อน (ภ.ง.ด.50 เต็มปี)</th><th class="amt">ปีปัจจุบัน (ประมาณการ ภ.ง.ด.51)</th></tr></thead><tbody>`;
+  const tr = (label, a, b, cls) => `<tr class="${cls || ''}"><td>${label}</td><td class="amt">${a}</td><td class="amt">${b}</td></tr>`;
+  rows += tr('กำไร(ขาดทุน)สุทธิทางบัญชี', F(pyProfit) + (pyProfit !== null ? ' <span class="hint">(จากงบ A)</span>' : ''), F(cyProfit));
+  rows += tr('บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย', F(P.addBack), N.hasData ? F(N.addBack) : '–', 'sub');
+  rows += tr('หัก รายได้ที่ได้รับการยกเว้น', Fn(P.exempt), N.hasData ? Fn(N.exempt) : '–', 'sub');
+  rows += tr('หัก ขาดทุนสะสมยกมาที่ใช้', Fn(P.lossUsed), N.hasData ? Fn(N.lossUsed) : '–', 'sub');
+  rows += tr('<b>กำไรสุทธิเพื่อเสียภาษี</b>', `<b>${hasPY ? fmt(P.taxable) : '–'}</b>`, `<b>${N.hasData ? fmt(N.taxable) : '–'}</b>`);
+  rows += tr('ฐานภาษี', hasPY ? fmt(Math.max(P.taxable, 0)) + ' <span class="hint">(เต็มปี)</span>' : '–',
+             N.hasData ? fmt(N.half) + ' <span class="hint">(กึ่งหนึ่ง)</span>' : '–', 'sub');
+  rows += tr('ภาษีเงินได้นิติบุคคล (CIT)',
+             hasPY ? fmt(P.cit) + (P.citIsComputed ? ' <span class="hint">(คำนวณ)</span>' : '') : '–',
+             N.hasData ? fmt(N.tax) : '–');
+  rows += tr('หัก ภาษีถูกหัก ณ ที่จ่าย', Fn(P.wht), N.hasData || N.wht ? Fn(N.wht) : '–', 'sub');
+  rows += `<tr class="total"><td>ภาษีที่ต้องชำระ</td><td class="amt">${hasPY ? fmt(P.payable) : '–'}</td><td class="amt">${N.hasData ? fmt(N.payable) : '–'}</td></tr>`;
+  rows += '</tbody>';
+  wrap.innerHTML = `<div style="overflow-x:auto"><table class="calc" style="margin-top:8px">${rows}</table></div>
+    <p class="note">ปีก่อนคิดภาษีจากกำไรเต็มปี (ตาม ภ.ง.ด.50) · ปีปัจจุบันคิดจากกึ่งหนึ่งของประมาณการ (ตาม ภ.ง.ด.51) · CIT "(คำนวณ)" = คำนวณจากงบทดลอง A + รายการปรับปรุงข้างต้น หากกรอก CIT เองจะใช้ค่าที่กรอก</p>`;
 }
 
 function estLabel(p) {
