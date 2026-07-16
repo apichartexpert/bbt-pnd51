@@ -90,6 +90,45 @@
     flex-shrink: 0;
   }
 
+  /* ===== Wizard: แถบขั้นตอน + ปุ่มย้อนกลับ/ถัดไป ===== */
+  .wizard-progress {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 14px 12px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+  }
+  .wz-row { display: flex; align-items: center; }
+  .wz-circle {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    border: none;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .85rem;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    background: var(--border);
+    color: var(--gray);
+    padding: 0;
+    transition: transform .1s;
+  }
+  .wz-circle:active { transform: scale(.94); }
+  .wz-circle.wz-done { background: var(--green); color: #fff; }
+  .wz-circle.wz-current { background: var(--blue); color: #fff; box-shadow: 0 0 0 4px rgba(140,198,63,.22); }
+  .wz-line { flex: 1; min-width: 8px; height: 2px; background: var(--border); margin: 0 4px; }
+  .wz-line.wz-line-done { background: var(--green); }
+  .wizard-progress-label { text-align: center; font-size: .8rem; color: var(--gray); font-weight: 600; margin-top: 10px; }
+  @media (max-width: 640px) {
+    .wz-circle { width: 26px; height: 26px; font-size: .75rem; }
+    .wz-line { margin: 0 2px; }
+  }
+  .wizard-nav { display: flex; justify-content: space-between; gap: 10px; margin: 20px 2px; }
+
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
   @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
   .field { display: flex; flex-direction: column; gap: 4px; }
@@ -210,6 +249,7 @@
   .wf-submitted { background: var(--amber-light); color: var(--amber); }
   .wf-reviewed { background: var(--blue-light); color: var(--blue-dark); }
   .wf-approved { background: var(--green-light); color: var(--green); }
+  .wf-returned { background: var(--red-light); color: var(--red); }
   .wf-log-item { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: .88rem; }
   .wf-log-item:last-child { border-bottom: none; }
   .wf-log-item .ico { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .85rem; }
@@ -362,22 +402,61 @@
       </div>
       <div class="btn-row">
         <button class="btn-primary btn-sm" id="btnCloudLogin" type="button">เข้าสู่ระบบ</button>
+        <button class="btn-outline btn-sm" id="btnCloudShowSignup" type="button">สมัครใช้งานใหม่</button>
         <button class="btn-outline btn-sm" id="btnCloudClearCfg" type="button">ล้างการตั้งค่า</button>
       </div>
-      <p class="note">บัญชีผู้ใช้ถูกสร้างโดยผู้ดูแลใน Firebase Console (Authentication → Users → Add user) — แอปไม่เปิดให้สมัครเอง เพื่อกันคนนอกเข้าถึงข้อมูลภาษี</p>
+      <p class="note">ยังไม่มีบัญชี? กด "สมัครใช้งานใหม่" — หลังสมัครต้องรอ partner อนุมัติก่อนจึงจะเห็นข้อมูลส่วนกลาง</p>
+    </div>
+    <div id="cloudSignup" style="display:none">
+      <div class="grid">
+        <div class="field"><label>ชื่อ-นามสกุล <span class="hint">(ให้ partner รู้ว่าใครขอสมัคร)</span></label><input type="text" id="signupName" placeholder="เช่น สมชาย ใจดี"></div>
+        <div class="field"><label>อีเมล</label><input type="text" id="signupEmail" placeholder="you@office.com" autocomplete="username"></div>
+        <div class="field"><label>รหัสผ่าน <span class="hint">(อย่างน้อย 6 ตัวอักษร)</span></label><input type="password" id="signupPass" autocomplete="new-password"></div>
+        <div class="field"><label>ยืนยันรหัสผ่าน</label><input type="password" id="signupPass2" autocomplete="new-password"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn-primary btn-sm" id="btnCloudSignup" type="button">สมัครใช้งาน</button>
+        <button class="btn-outline btn-sm" id="btnCloudCancelSignup" type="button">← กลับไปเข้าสู่ระบบ</button>
+      </div>
+      <p class="note">สมัครแล้วจะยังใช้ข้อมูลส่วนกลางไม่ได้ทันที — ต้องรอ partner (ผู้ดูแล) กดอนุมัติในแอปก่อน</p>
+    </div>
+    <div id="cloudPending" style="display:none">
+      <p class="note" style="margin-top:0">บัญชีของคุณ (<span id="pendingEmail"></span>) <b>สมัครสำเร็จแล้ว กำลังรอ partner อนุมัติ</b> — ระหว่างนี้ยังใช้แอปแบบออฟไลน์ได้ตามปกติ (ข้อมูลอยู่ในเครื่อง)</p>
+      <div class="btn-row">
+        <button class="btn-primary btn-sm" id="btnCloudCheckApproval" type="button">🔄 ตรวจสอบสถานะอีกครั้ง</button>
+        <button class="btn-outline btn-sm" id="btnCloudLogoutPending" type="button">ออกจากระบบ</button>
+      </div>
     </div>
     <div id="cloudConnected" style="display:none">
       <div class="btn-row" style="margin-top:4px">
         <button class="btn-outline btn-sm" id="btnCloudSyncNow" type="button">🔄 ซิงค์เดี๋ยวนี้</button>
         <button class="btn-outline btn-sm" id="btnCloudLogout" type="button">ออกจากระบบ</button>
       </div>
+      <div id="cloudAdminPanel" style="display:none; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-top:12px">
+        <div class="assign-head" style="margin-bottom:8px">คำขอสมัครที่รออนุมัติ (เห็นเฉพาะ partner)</div>
+        <div id="cloudPendingList"></div>
+        <div class="assign-head" style="margin-top:14px; margin-bottom:8px">ผู้ใช้ทั้งหมด — เปลี่ยนบทบาทได้ (Staff / Manager / Partner)</div>
+        <div id="cloudUsersList"></div>
+      </div>
     </div>
     <p class="note">เมื่อเชื่อมต่อแล้ว ข้อมูลบริษัท/พนักงาน/สถานะ Sign-off จะบันทึกขึ้นระบบกลางอัตโนมัติ และอัปเดตถึงกันทุกเครื่องที่ล็อกอิน · เมื่อไม่ล็อกอิน แอปยังใช้แบบออฟไลน์ได้ตามปกติ (ข้อมูลอยู่ในเครื่อง)</p>
   </div>
 
-  <!-- ===== บริษัท ===== -->
-  <div class="card screen-only">
-    <h2><span class="step">1</span> เลือกบริษัท</h2>
+  <!-- ===== รายการงาน (แสดงเมื่อล็อกอินระบบกลางแล้ว) ===== -->
+  <div class="card screen-only" id="jobsCard" style="display:none">
+    <h2><span class="step">📋</span> รายการงาน — สถานะทุกบริษัท</h2>
+    <div id="jobsList"></div>
+  </div>
+
+  <!-- ===== แถบขั้นตอน (Wizard progress) ===== -->
+  <div class="wizard-progress screen-only" id="wizardProgress">
+    <div class="wz-row" id="wizardProgressRow"></div>
+    <div class="wizard-progress-label" id="wizardProgressLabel"></div>
+  </div>
+
+  <!-- ===== บริษัท + อัตราภาษี ===== -->
+  <div class="card screen-only wizard-page" data-step="1">
+    <h2><span class="step">1</span> เลือกบริษัท / อัตราภาษี</h2>
     <div class="company-bar">
       <div class="field">
         <label>บริษัทที่บันทึกไว้</label>
@@ -450,11 +529,7 @@
         <select id="coApprover"></select>
       </div>
     </div>
-  </div>
-
-  <!-- ===== ประเภทนิติบุคคล ===== -->
-  <div class="card screen-only">
-    <h2><span class="step">2</span> ประเภทนิติบุคคล / อัตราภาษี</h2>
+    <div class="sub-head">ประเภทนิติบุคคล / อัตราภาษี</div>
     <div class="radio-row" id="entityTypeRow">
       <label>
         <input type="radio" name="entityType" value="sme" checked>
@@ -472,8 +547,8 @@
   </div>
 
   <!-- ===== นำเข้างบทดลอง & เปรียบเทียบ ===== -->
-  <div class="card screen-only">
-    <h2><span class="step">3</span> นำเข้างบทดลอง (Trial Balance) &amp; เปรียบเทียบ</h2>
+  <div class="card screen-only wizard-page" data-step="2">
+    <h2><span class="step">2</span> นำเข้างบทดลอง (Trial Balance) &amp; เปรียบเทียบ</h2>
     <p class="note" style="margin-top:0">
       นำเข้าไฟล์ Excel งบทดลองก่อนปิดบัญชี (รูปแบบเดียวกับที่ส่งออกจากระบบบัญชี) ได้สูงสุด 3 งวด: A ปีก่อน · B ผลจริงครึ่งปี · C ประมาณการทั้งปี
       โปรแกรมจะจัดกลุ่มบัญชีเป็น รายได้ / ต้นทุน / ค่าใช้จ่าย SGA / ดอกเบี้ยจ่าย โดยอัตโนมัติ แล้วสร้างงบกำไรขาดทุนเปรียบเทียบพร้อม % ของรายได้แต่ละงวด
@@ -537,14 +612,14 @@
         <input type="text" class="num" id="inPYPayable" placeholder="0.00">
       </div>
     </div>
-    <div class="sub-head">ข้อมูลภาษีปีปัจจุบัน <span class="hint" style="font-weight:400">— ซิงค์กับส่วนที่ 4 (กรอกที่ไหนก็ได้)</span></div>
+    <div class="sub-head">ข้อมูลภาษีปีปัจจุบัน <span class="hint" style="font-weight:400">— ซิงค์กับขั้นตอนที่ 3 (กรอกที่ไหนก็ได้) · ภาษีถูกหัก ณ ที่จ่าย ดึงจากงบทดลองให้อัตโนมัติ (บัญชี 1154xx) ถ้าช่องยังว่าง</span></div>
     <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
       <div class="field">
         <label>ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก (บาท)</label>
         <input type="text" class="num" id="inCYWht" placeholder="0.00">
       </div>
       <div class="field">
-        <label>ขาดทุนสะสมยกมาที่ใช้ ปีปัจจุบัน (บาท) <span class="hint">— ตารางขาดทุนสะสมอยู่ส่วนที่ 4</span></label>
+        <label>ขาดทุนสะสมยกมาที่ใช้ ปีปัจจุบัน (บาท) <span class="hint">— ตารางขาดทุนสะสมอยู่ขั้นตอนที่ 3</span></label>
         <input type="text" class="num" id="inCYLossUsed" placeholder="0.00">
       </div>
     </div>
@@ -552,8 +627,8 @@
   </div>
 
   <!-- ===== ตัวเลขประมาณการ & ปรับปรุงทางภาษี ===== -->
-  <div class="card screen-only">
-    <h2><span class="step">4</span> ประมาณการกำไรและปรับปรุงทางภาษี</h2>
+  <div class="card screen-only wizard-page" data-step="3">
+    <h2><span class="step">3</span> ประมาณการกำไรและปรับปรุงทางภาษี</h2>
     <div class="grid">
       <div class="field">
         <label>ประมาณการรายได้ทั้งปี (บาท) <span class="hint">— ใช้ตรวจเกณฑ์ SME</span></label>
@@ -602,28 +677,31 @@
   </div>
 
   <!-- ===== ผลการคำนวณ ===== -->
-  <div class="card screen-only" id="resultCard" style="display:none">
-    <h2><span class="step">5</span> ผลการคำนวณ &amp; สรุปแบบ ภ.ง.ด.51</h2>
-    <table class="calc" id="calcTable"></table>
-    <div class="result-final" id="finalBox">
-      <span class="label" id="finalLabel"></span>
-      <span class="value" id="finalValue"></span>
+  <div class="card screen-only wizard-page" id="resultCard" data-step="4">
+    <h2><span class="step">4</span> ผลการคำนวณ &amp; สรุปแบบ ภ.ง.ด.51</h2>
+    <div id="resultEmpty" class="wf-empty">ยังไม่ได้คำนวณ — กลับไปขั้นตอนที่ 3 แล้วกด "คำนวณภาษี &amp; สรุปแบบ ภ.ง.ด.51" ก่อน</div>
+    <div id="resultInner" style="display:none">
+      <table class="calc" id="calcTable"></table>
+      <div class="result-final" id="finalBox">
+        <span class="label" id="finalLabel"></span>
+        <span class="value" id="finalValue"></span>
+      </div>
+      <div id="riskBox"></div>
+      <div id="pndSummary"></div>
+      <div class="btn-row">
+        <button class="btn-primary" id="btnSave" type="button">💾 บันทึกผลสรุป</button>
+        <button class="btn-outline" id="btnPrint" type="button">🖨 ดูตัวอย่าง / พิมพ์สรุป ภ.ง.ด.51</button>
+        <button class="btn-outline" id="btnDownloadPrint" type="button">⬇ ดาวน์โหลดไฟล์สรุป (.html)</button>
+      </div>
+      <p class="note">กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
+      (รอบปีปฏิทิน: ภายใน 31 สิงหาคม — ยื่นออนไลน์ได้รับสิทธิขยายเวลาเพิ่มตามประกาศกรมสรรพากร)
+      · โปรแกรมนี้เป็นเครื่องมือช่วยคำนวณเบื้องต้น โปรดตรวจสอบกับผู้สอบบัญชี/กรมสรรพากรก่อนยื่นจริง</p>
     </div>
-    <div id="riskBox"></div>
-    <div id="pndSummary"></div>
-    <div class="btn-row">
-      <button class="btn-primary" id="btnSave" type="button">💾 บันทึกผลสรุป</button>
-      <button class="btn-outline" id="btnPrint" type="button">🖨 ดูตัวอย่าง / พิมพ์สรุป ภ.ง.ด.51</button>
-      <button class="btn-outline" id="btnDownloadPrint" type="button">⬇ ดาวน์โหลดไฟล์สรุป (.html)</button>
-    </div>
-    <p class="note">กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
-    (รอบปีปฏิทิน: ภายใน 31 สิงหาคม — ยื่นออนไลน์ได้รับสิทธิขยายเวลาเพิ่มตามประกาศกรมสรรพากร)
-    · โปรแกรมนี้เป็นเครื่องมือช่วยคำนวณเบื้องต้น โปรดตรวจสอบกับผู้สอบบัญชี/กรมสรรพากรก่อนยื่นจริง</p>
   </div>
 
   <!-- ===== การตรวจสอบและอนุมัติ (Sign-off) ===== -->
-  <div class="card screen-only">
-    <h2><span class="step">6</span> การตรวจสอบและอนุมัติ (Review &amp; Sign-off)</h2>
+  <div class="card screen-only wizard-page" data-step="5">
+    <h2><span class="step">5</span> การตรวจสอบและอนุมัติ (Review &amp; Sign-off)</h2>
     <div id="wfStatusRow" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:6px">
       <span style="font-weight:600; color:var(--gray)">สถานะปัจจุบัน:</span>
       <span id="wfBadge" class="wf-badge"></span>
@@ -634,6 +712,10 @@
         <div class="field">
           <label>ผู้ดำเนินการ <span class="hint" id="wfActorHint"></span></label>
           <select id="wfActor"></select>
+        </div>
+        <div class="field" id="wfSendToField" style="display:none">
+          <label id="wfSendToLabel">ส่งให้</label>
+          <select id="wfSendTo"></select>
         </div>
         <div class="field">
           <label>หมายเหตุ / ความเห็น <span class="hint">(ไม่บังคับ)</span></label>
@@ -648,9 +730,15 @@
   </div>
 
   <!-- ===== ประวัติ ===== -->
-  <div class="card screen-only">
-    <h2><span class="step">7</span> ประวัติที่บันทึกไว้ <span class="hint" id="historyCompanyName"></span></h2>
+  <div class="card screen-only wizard-page" data-step="6">
+    <h2><span class="step">6</span> ประวัติที่บันทึกไว้ <span class="hint" id="historyCompanyName"></span></h2>
     <div id="historyWrap" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- ===== ปุ่มย้อนกลับ / ขั้นตอนถัดไป ===== -->
+  <div class="wizard-nav screen-only">
+    <button class="btn-outline" id="btnWzBack" type="button">← ย้อนกลับ</button>
+    <button class="btn-primary" id="btnWzNext" type="button">ขั้นตอนถัดไป →</button>
   </div>
 
   <!-- ===== รายงานสำหรับพิมพ์ ===== -->
@@ -769,6 +857,7 @@ function renderCompanySelect() {
     if (c.id === db.activeId) opt.selected = true;
     sel.appendChild(opt);
   });
+  renderJobsDashboard();
 }
 function loadCompanyToForm() {
   const c = activeCompany();
@@ -790,7 +879,7 @@ function loadCompanyToForm() {
   renderHistory();
   renderWorkflow();
   renderPriorYearTax();
-  $('resultCard').style.display = 'none';
+  setResultVisible(false);
 }
 function saveCompanyFromForm() {
   const c = activeCompany();
@@ -1033,10 +1122,10 @@ function fmtDateTime(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString('th-TH') + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 }
-function wfActorOptions(defaultName) {
+function wfActorOptions(defaultName, placeholder) {
   const emps = (db.employees || []);
   const names = emps.map(e => e.name);
-  let opts = '<option value="">— เลือกผู้ดำเนินการ —</option>';
+  let opts = `<option value="">— ${placeholder || 'เลือกผู้ดำเนินการ'} —</option>`;
   // ให้ผู้รับผิดชอบที่กำหนดไว้ (Preparer/Reviewer/Approver) อยู่บนสุดและถูกเลือกไว้เสมอ แม้ยังไม่อยู่ในฐานข้อมูลพนักงาน
   if (defaultName && !names.includes(defaultName)) {
     opts += `<option value="${escapeHtml(defaultName)}" selected>${escapeHtml(defaultName)}</option>`;
@@ -1052,9 +1141,14 @@ function renderWorkflow() {
   const c = activeCompany();
   const wf = ensureWorkflow(c);
   if (!wf.current) wf.current = {};
-  const st = WF_STATUS[wf.status] || WF_STATUS.draft;
+  if (!wf.assigned) wf.assigned = {};
+  const st = (wf.status === 'draft' && wf.returned)
+    ? { label: 'ถูกตีกลับให้แก้ไข', cls: 'wf-returned' }
+    : (WF_STATUS[wf.status] || WF_STATUS.draft);
   $('wfBadge').className = 'wf-badge ' + st.cls;
-  $('wfBadge').textContent = st.label;
+  $('wfBadge').textContent = st.label
+    + (wf.status === 'submitted' && wf.assigned.reviewer ? ` (ส่งให้ ${wf.assigned.reviewer})` : '')
+    + (wf.status === 'reviewed' && wf.assigned.approver ? ` (ส่งให้ ${wf.assigned.approver})` : '');
   $('wfSnapshot').textContent = wf.snapshot
     ? `(ยอดที่ส่งตรวจ: ภาษีที่ต้องชำระ ${fmt(Math.max(wf.snapshot.netPay, 0))} บาท · ส่งเมื่อ ${fmtDateTime(wf.snapshot.at)})`
     : '';
@@ -1063,24 +1157,56 @@ function renderWorkflow() {
                  : wf.status === 'submitted' ? 'ผู้ตรวจสอบ (Reviewer)'
                  : wf.status === 'reviewed' ? 'ผู้อนุมัติ (Approver)' : '';
   const defName = wf.status === 'draft' ? c.preparer
-                : wf.status === 'submitted' ? c.reviewer
-                : wf.status === 'reviewed' ? c.approver : '';
+                : wf.status === 'submitted' ? (wf.assigned.reviewer || c.reviewer)
+                : wf.status === 'reviewed' ? (wf.assigned.approver || c.approver) : '';
   $('wfActor').innerHTML = wfActorOptions(defName);
+
+  // ช่อง "ส่งให้ใคร": ขั้นร่างเลือก reviewer ที่จะส่งตรวจ · ขั้นรอตรวจเลือก approver ที่จะส่งอนุมัติ
+  const sendField = $('wfSendToField');
+  if (wf.status === 'draft') {
+    sendField.style.display = '';
+    $('wfSendToLabel').textContent = 'ส่งให้ผู้ตรวจสอบ (Reviewer)';
+    $('wfSendTo').innerHTML = wfActorOptions(wf.assigned.reviewer || c.reviewer, 'เลือกผู้ตรวจสอบที่จะส่งให้');
+  } else if (wf.status === 'submitted') {
+    sendField.style.display = '';
+    $('wfSendToLabel').textContent = 'ส่งให้ผู้อนุมัติ (Approver)';
+    $('wfSendTo').innerHTML = wfActorOptions(wf.assigned.approver || c.approver, 'เลือกผู้อนุมัติที่จะส่งให้');
+  } else {
+    sendField.style.display = 'none';
+  }
   $('wfActorHint').textContent = stepRole
     ? (defName ? `— ขั้นนี้: ${stepRole} = ${defName}` : `— ขั้นนี้: ${stepRole} (ยังไม่ได้กำหนดใน Section 1)`)
     : '';
 
-  let b = '';
+  // สิทธิ์ตามบทบาทบัญชีที่ล็อกอิน (ถ้าไม่ได้ล็อกอิน = โหมดออฟไลน์ ไม่จำกัด):
+  // staff = ส่งตรวจ · manager = ส่งตรวจ+ตรวจสอบ · partner = อนุมัติ
+  const gate = act => {
+    if (!cloudUser || !cloudApproved || !cloudRole) return true;
+    if (act === 'submit') return cloudRole === 'staff' || cloudRole === 'manager';
+    if (act === 'review') return cloudRole === 'manager';
+    if (act === 'approve' || act === 'reopen') return cloudRole === 'partner';
+    return true;
+  };
+  let b = '', needRole = '';
   if (wf.status === 'draft') {
-    b += `<button class="btn-primary btn-sm" onclick="wfDo('submit')" type="button">📤 ส่งให้ตรวจสอบ</button>`;
+    if (gate('submit')) b += `<button class="btn-primary btn-sm" onclick="wfDo('submit')" type="button">📤 ส่งให้ตรวจสอบ</button>`;
+    else needRole = 'Staff หรือ Manager';
   } else if (wf.status === 'submitted') {
-    b += `<button class="btn-approve btn-sm" onclick="wfDo('review-pass')" type="button">✔ ผ่านการตรวจ – ส่งอนุมัติ</button>`;
-    b += `<button class="btn-reject btn-sm" onclick="wfDo('review-reject')" type="button">↩ ตีกลับให้แก้ไข</button>`;
+    if (gate('review')) {
+      b += `<button class="btn-approve btn-sm" onclick="wfDo('review-pass')" type="button">✔ ผ่านการตรวจ – ส่งอนุมัติ</button>`;
+      b += `<button class="btn-reject btn-sm" onclick="wfDo('review-reject')" type="button">↩ ตีกลับให้แก้ไข</button>`;
+    } else needRole = 'Manager';
   } else if (wf.status === 'reviewed') {
-    b += `<button class="btn-approve btn-sm" onclick="wfDo('approve')" type="button">✅ อนุมัติ</button>`;
-    b += `<button class="btn-reject btn-sm" onclick="wfDo('approve-reject')" type="button">↩ ตีกลับ</button>`;
+    if (gate('approve')) {
+      b += `<button class="btn-approve btn-sm" onclick="wfDo('approve')" type="button">✅ อนุมัติ</button>`;
+      b += `<button class="btn-reject btn-sm" onclick="wfDo('approve-reject')" type="button">↩ ตีกลับ</button>`;
+    } else needRole = 'Partner';
   } else if (wf.status === 'approved') {
-    b += `<button class="btn-outline btn-sm" onclick="wfDo('reopen')" type="button">🔓 เปิดแก้ไขใหม่</button>`;
+    if (gate('reopen')) b += `<button class="btn-outline btn-sm" onclick="wfDo('reopen')" type="button">🔓 เปิดแก้ไขใหม่</button>`;
+    else needRole = 'Partner';
+  }
+  if (!b && needRole) {
+    b = `<span class="hint">บทบาทของคุณ (${CLOUD_ROLE_LABELS[cloudRole] || cloudRole}) ไม่มีสิทธิ์ดำเนินการขั้นนี้ — ต้องเป็น ${needRole}</span>`;
   }
   b += `<button class="btn-outline btn-sm" onclick="exportCompany()" type="button">📎 ส่งไฟล์ให้ผู้ตรวจ/อนุมัติ</button>`;
   $('wfButtons').innerHTML = b;
@@ -1091,38 +1217,51 @@ function renderWorkflow() {
     wrap.innerHTML = wf.log.slice().reverse().map(e => {
       const a = WF_ACTION[e.action] || { label: e.action, role: '', ico: 'sub', icon: '•' };
       return `<div class="wf-log-item"><div class="ico ${a.ico}">${a.icon}</div><div class="body">`
-        + `<div><span class="who">${escapeHtml(e.name || '-')}</span> <span class="meta">— ${a.role} · ${a.label}</span></div>`
+        + `<div><span class="who">${escapeHtml(e.name || '-')}</span> <span class="meta">— ${a.role} · ${a.label}${e.target ? ' → ส่งให้ ' + escapeHtml(e.target) : ''}</span></div>`
         + `<div class="meta">${fmtDateTime(e.at)}</div>`
         + (e.note ? `<div class="nt">“${escapeHtml(e.note)}”</div>` : '')
         + `</div></div>`;
     }).join('');
   }
+  renderProgressBar();
+  renderJobsDashboard();
 }
 
 window.wfDo = function (action) {
   const c = activeCompany();
   const wf = ensureWorkflow(c);
   if (!wf.current) wf.current = {};
+  if (!wf.assigned) wf.assigned = {};
   const name = $('wfActor').value;
   const note = $('wfNote').value.trim();
   if (action !== 'reopen' && !name) { toast('กรุณาเลือกผู้ดำเนินการก่อน'); return; }
   const at = new Date().toISOString();
+  let target = '';
 
   if (action === 'submit') {
     if (!lastResult) { toast('กรุณากด "คำนวณภาษี" เพื่อสร้างผลสรุปก่อนส่งตรวจ'); return; }
+    target = $('wfSendTo').value;
+    if (!target) { toast('กรุณาเลือกผู้ตรวจสอบ (Reviewer) ที่จะส่งให้'); return; }
     wf.snapshot = { netPay: lastResult.netPay, tax: lastResult.tax, taxableProfit: lastResult.taxableProfit,
                     half: lastResult.half, revenue: lastResult.revenue, expense: lastResult.expense,
                     year: c.year, entityType: lastResult.entityType, at };
     wf.status = 'submitted';
+    wf.returned = false;
+    wf.assigned.reviewer = target;
     wf.current = { preparer: { name, at } };
   } else if (action === 'review-pass') {
-    wf.status = 'reviewed'; wf.current.reviewer = { name, at };
+    target = $('wfSendTo').value;
+    if (!target) { toast('กรุณาเลือกผู้อนุมัติ (Approver) ที่จะส่งให้'); return; }
+    wf.status = 'reviewed';
+    wf.assigned.approver = target;
+    wf.current.reviewer = { name, at };
   } else if (action === 'approve') {
     wf.status = 'approved'; wf.current.approver = { name, at };
   } else if (action === 'review-reject' || action === 'approve-reject' || action === 'reopen') {
-    wf.status = 'draft'; wf.current = {};      // ล้างลายเซ็นรอบปัจจุบัน (log ยังคงอยู่)
+    wf.status = 'draft'; wf.current = {}; wf.assigned = {};   // ล้างลายเซ็น+ผู้รับงานรอบปัจจุบัน (log ยังคงอยู่)
+    wf.returned = (action !== 'reopen');   // ตีกลับ = สถานะ "ถูกตีกลับให้แก้ไข" · เปิดใหม่ = ร่างปกติ
   }
-  wf.log.push({ action, name: name || '—', note, at });
+  wf.log.push({ action, name: name || '—', note, at, target: target || undefined });
   $('wfNote').value = '';
   saveDB();
   renderWorkflow();
@@ -1296,8 +1435,8 @@ function renderResult() {
   riskBox.innerHTML = riskHtml;
   renderPndSummary(r);
 
-  $('resultCard').style.display = 'block';
-  $('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setResultVisible(true);
+  goToStep(4);
 }
 
 function estimateTaxOn(base, type) {
@@ -1405,7 +1544,7 @@ $('btnCalc').addEventListener('click', calculate);
 $('btnClear').addEventListener('click', () => {
   ['inRevenue', 'inExpense', 'inProfit', 'inAddBack', 'inExempt', 'inLastYearProfit', 'inWht', 'inLossUsed']
     .forEach(id => $(id).value = '');
-  $('resultCard').style.display = 'none';
+  setResultVisible(false);
   lastResult = null;
 });
 
@@ -1751,19 +1890,22 @@ function parseTrialBalance(aoa) {
     const n = parseFloat(String(v).replace(/,/g, ''));
     return isFinite(n) ? n : 0;
   };
+  let whtTotal = 0;   // ภาษีถูกหัก ณ ที่จ่าย (สินทรัพย์ 1154xx) — ใช้เติมช่อง WHT อัตโนมัติ
   for (let r = 0; r < aoa.length; r++) {
     const row = aoa[r] || [];
     const code = row[codeCol];
     if (code === null || code === undefined) continue;
     const cs = String(code).trim();
     if (!/^\d{4,8}$/.test(cs)) continue;
-    const cls = classifyCode(cs);
-    if (!cls) continue;
+    const name = String(row[nameCol] || '').trim();
     const dr = num(row[endDr]);
     const cr = num(row[endCr]);
+    if (cs.startsWith('1154') || name.includes('ถูกหัก ณ ที่จ่าย')) whtTotal += dr - cr;
+    const cls = classifyCode(cs);
+    if (!cls) continue;
     // รายได้ = เครดิต - เดบิต ; ค่าใช้จ่าย = เดบิต - เครดิต
     const amount = (cls === 'revenue') ? (cr - dr) : (dr - cr);
-    accounts.push({ code: cs, name: String(row[nameCol] || '').trim(), group: cls, amount });
+    accounts.push({ code: cs, name, group: cls, amount });
   }
   if (!accounts.length) throw new Error('ไม่พบรายการบัญชีในไฟล์ — ตรวจสอบว่าเป็นไฟล์งบทดลองที่มีคอลัมน์เลขผังบัญชีและยอดคงเหลือ');
 
@@ -1772,7 +1914,7 @@ function parseTrialBalance(aoa) {
   const grossMargin = totals.revenue - totals.cost;
   const ebit = grossMargin - totals.sga;
   const netProfit = ebit - totals.interest;
-  return { company, period, accounts, totals, grossMargin, ebit, netProfit };
+  return { company, period, accounts, totals, grossMargin, ebit, netProfit, whtTotal };
 }
 
 function readFile(input, slot) {
@@ -1788,6 +1930,7 @@ function readFile(input, slot) {
       if (slot === 'A') { parsedA = parsed; $('metaA').textContent = describeParsed(parsed); }
       else if (slot === 'C') { parsedC = parsed; $('metaC').textContent = describeParsed(parsed); }
       else { parsedB = parsed; $('metaB').textContent = describeParsed(parsed); }
+      autoFillWht(slot, parsed);
       $('importError').style.display = 'none';
       renderCompare();
     } catch (err) {
@@ -1808,6 +1951,24 @@ function describeParsed(p) {
   if (p.period) parts.push('ช่วง ' + p.period);
   parts.push(p.accounts.length + ' บัญชี · กำไร(ขาดทุน)ก่อนภาษี ' + fmt(p.netProfit));
   return '✓ ' + parts.join(' · ');
+}
+
+// เติมภาษีถูกหัก ณ ที่จ่าย จากงบทดลอง (บัญชี 1154xx) — เติมเฉพาะเมื่อช่องยังว่าง ไม่ทับที่กรอกเอง
+function autoFillWht(slot, p) {
+  if (!p.whtTotal) return;
+  if (slot === 'A') {
+    if ($('inPYWht').value.trim() === '') {
+      $('inPYWht').value = fmt(p.whtTotal);
+      saveCompanyFromForm(); renderPriorYearTax();
+      toast('ดึงภาษีถูกหัก ณ ที่จ่าย ปีก่อน ' + fmt(p.whtTotal) + ' บาท จากงบทดลอง A แล้ว');
+    }
+  } else if (slot === 'B') {
+    if ($('inWht').value.trim() === '') {
+      $('inWht').value = fmt(p.whtTotal);
+      syncCYFields(); renderPriorYearTax();
+      toast('ดึงภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก ' + fmt(p.whtTotal) + ' บาท จากงบทดลอง B แล้ว');
+    }
+  }
 }
 
 function pctOfRev(val, rev) {
@@ -2024,8 +2185,17 @@ $('btnToggleDetail').addEventListener('click', () => {
 
 /* ---------- ระบบกลาง (Firebase Cloud Sync) ---------- */
 const CLOUD_CFG_KEY = 'pnd51_cloud_config_v1';
+const CLOUD_ADMIN_EMAILS = ['apichart.expert@gmail.com'];   // partner/ผู้ดูแล — อนุมัติผู้สมัครใหม่ได้
 let fbAuth = null, fbDb = null;
 let cloudUser = null, cloudReady = false, cloudLoadFailed = false, cloudPushing = false;
+let cloudApproved = false, cloudSignupMode = false, cloudRole = '';
+// บทบาท: staff = ผู้จัดทำ · manager = ผู้จัดทำ/ผู้ตรวจสอบ · partner = ผู้อนุมัติ (และผู้ดูแลระบบ)
+const CLOUD_ROLE_LABELS = { staff: 'Staff (ผู้จัดทำ)', manager: 'Manager (จัดทำ/ตรวจสอบ)', partner: 'Partner (ผู้อนุมัติ)' };
+// admin = อีเมลใน CLOUD_ADMIN_EMAILS หรือผู้ใช้ที่ได้รับบทบาท partner (อนุมัติแล้ว)
+function isCloudAdmin() {
+  return !!(cloudUser && (CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())
+    || (cloudApproved && cloudRole === 'partner')));
+}
 let applyingRemote = false, pushTimer = null, unsubCompanies = null;
 
 function getCloudConfig() {
@@ -2067,9 +2237,13 @@ async function cloudInit() {
     fbAuth = firebase.auth();
     fbDb = firebase.firestore();
     cloudReady = true;
-    fbAuth.onAuthStateChanged(u => {
+    fbAuth.onAuthStateChanged(async u => {
       cloudUser = u;
-      if (u) startSync(); else stopSync();
+      cloudApproved = false;
+      if (u) {
+        await checkApproval();
+        if (cloudApproved) startSync(); else stopSync();
+      } else stopSync();
       renderCloudUI();
     });
   } catch (e) {
@@ -2077,8 +2251,31 @@ async function cloudInit() {
   }
   renderCloudUI();
 }
+// ตรวจว่าบัญชีนี้ได้รับอนุมัติจาก partner แล้วหรือยัง (partner เองผ่านเสมอ)
+async function checkApproval() {
+  if (!cloudUser || !fbDb) { cloudApproved = false; cloudRole = ''; return; }
+  // เช็คจากอีเมลโดยตรง (ตอนนี้ยังไม่รู้ role จาก Firestore)
+  if (CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())) { cloudApproved = true; cloudRole = 'partner'; return; }
+  try {
+    const ref = fbDb.collection('users').doc(cloudUser.uid);
+    const doc = await ref.get();
+    if (doc.exists) {
+      cloudApproved = doc.data().approved === true;
+      cloudRole = doc.data().role || 'staff';
+    } else {
+      // บัญชีที่ partner สร้างให้ใน Console ยังไม่มีคำขอ — สร้างคำขอรออนุมัติให้อัตโนมัติ
+      await ref.set({ email: cloudUser.email || '', name: '', approved: false, role: 'staff', requestedAt: new Date().toISOString() });
+      cloudApproved = false;
+      cloudRole = 'staff';
+    }
+  } catch (e) {
+    cloudApproved = false;
+    cloudRole = '';
+  }
+}
+
 async function startSync() {
-  if (!fbDb || !cloudUser) return;
+  if (!fbDb || !cloudUser || !cloudApproved) return;
   try {
     // 1) ดึงข้อมูลส่วนกลางมารวมกับในเครื่อง (ใครใหม่กว่าใช้อันนั้น)
     const snap = await fbDb.collection('companies').get();
@@ -2158,6 +2355,9 @@ function thaiAuthError(e) {
   const code = (e && e.code) || '';
   if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
   if (code.includes('invalid-email')) return 'รูปแบบอีเมลไม่ถูกต้อง';
+  if (code.includes('email-already-in-use')) return 'อีเมลนี้ถูกใช้สมัครไปแล้ว — ลองเข้าสู่ระบบแทน';
+  if (code.includes('weak-password')) return 'รหัสผ่านสั้นหรือเดาง่ายเกินไป (อย่างน้อย 6 ตัวอักษร)';
+  if (code.includes('admin-restricted') || code.includes('operation-not-allowed')) return 'ระบบยังไม่เปิดให้สมัครเอง — ติดต่อ partner ให้เปิด "Enable create (sign-up)" ใน Firebase Console';
   if (code.includes('too-many-requests')) return 'ลองผิดหลายครั้งเกินไป โปรดรอสักครู่';
   if (code.includes('network')) return 'เชื่อมต่ออินเทอร์เน็ตไม่ได้';
   if (code.includes('permission-denied')) return 'ไม่มีสิทธิ์เข้าถึงข้อมูล — ตรวจ Security Rules ใน Firebase Console';
@@ -2167,9 +2367,8 @@ function thaiAuthError(e) {
 function renderCloudUI() {
   const badge = $('cloudBadge');
   const cfg = getCloudConfig();
-  $('cloudSetup').style.display = 'none';
-  $('cloudLogin').style.display = 'none';
-  $('cloudConnected').style.display = 'none';
+  ['cloudSetup', 'cloudLogin', 'cloudSignup', 'cloudPending', 'cloudConnected'].forEach(id => { $(id).style.display = 'none'; });
+  renderJobsDashboard();
   if (cloudLoadFailed) {
     badge.className = 'wf-badge wf-submitted';
     badge.textContent = 'เชื่อมต่อระบบกลางไม่ได้ — ใช้โหมดออฟไลน์';
@@ -2190,13 +2389,108 @@ function renderCloudUI() {
   if (!cloudUser) {
     badge.className = 'wf-badge wf-submitted';
     badge.textContent = 'ยังไม่ได้เข้าสู่ระบบ';
-    $('cloudLogin').style.display = 'block';
+    $(cloudSignupMode ? 'cloudSignup' : 'cloudLogin').style.display = 'block';
+    return;
+  }
+  if (!cloudApproved) {
+    badge.className = 'wf-badge wf-submitted';
+    badge.textContent = 'รอ partner อนุมัติ';
+    $('pendingEmail').textContent = cloudUser.email || '';
+    $('cloudPending').style.display = 'block';
     return;
   }
   badge.className = 'wf-badge wf-approved';
-  badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '');
+  badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '')
+    + (cloudRole ? ' · ' + (CLOUD_ROLE_LABELS[cloudRole] || cloudRole) : '');
   $('cloudConnected').style.display = 'block';
+  $('cloudAdminPanel').style.display = isCloudAdmin() ? 'block' : 'none';
+  if (isCloudAdmin()) { loadPendingUsers(); loadAllUsers(); }
+  renderJobsDashboard();
+  renderWorkflow();
 }
+
+// ---- แผงอนุมัติของ partner ----
+async function loadPendingUsers() {
+  const wrap = $('cloudPendingList');
+  try {
+    const snap = await fbDb.collection('users').where('approved', '==', false).get();
+    if (snap.empty) { wrap.innerHTML = '<div class="wf-empty">ไม่มีคำขอค้างอยู่</div>'; return; }
+    let h = '';
+    snap.forEach(d => {
+      const u = d.data();
+      h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 0; border-bottom:1px solid var(--border)">`
+        + `<span style="flex:1; min-width:180px"><b>${escapeHtml(u.name || '(ไม่ระบุชื่อ)')}</b> · ${escapeHtml(u.email || '')}</span>`
+        + `<select id="roleSel_${d.id}" style="width:auto; padding:6px 10px; font-size:.85rem">`
+        + `<option value="staff">Staff (ผู้จัดทำ)</option>`
+        + `<option value="manager">Manager (จัดทำ/ตรวจสอบ)</option>`
+        + `<option value="partner">Partner (ผู้อนุมัติ/ผู้ดูแล)</option>`
+        + `</select>`
+        + `<button class="btn-approve btn-sm" onclick="cloudApproveUser('${d.id}')" type="button">✔ อนุมัติ</button>`
+        + `<button class="btn-reject btn-sm" onclick="cloudRejectUser('${d.id}')" type="button">✕ ปฏิเสธ</button>`
+        + `</div>`;
+    });
+    wrap.innerHTML = h;
+  } catch (e) {
+    wrap.innerHTML = '<div class="wf-empty">โหลดรายการไม่สำเร็จ: ' + escapeHtml(thaiAuthError(e)) + '</div>';
+  }
+}
+window.cloudApproveUser = async function (uid) {
+  try {
+    const roleSel = $('roleSel_' + uid);
+    const role = (roleSel && roleSel.value) || 'staff';
+    await fbDb.collection('users').doc(uid).update({ approved: true, role, approvedBy: cloudUser.email || '', approvedAt: new Date().toISOString() });
+    toast(`อนุมัติเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้กด "ตรวจสอบสถานะอีกครั้ง" ในแอปได้เลย`);
+    loadPendingUsers();
+  } catch (e) { toast('อนุมัติไม่สำเร็จ: ' + thaiAuthError(e)); }
+};
+window.cloudRejectUser = async function (uid) {
+  if (!confirm('ปฏิเสธคำขอนี้? (บัญชีล็อกอินจะยังอยู่แต่เข้าถึงข้อมูลส่วนกลางไม่ได้ — ถ้าต้องการลบบัญชีถาวร ให้ลบใน Firebase Console)')) return;
+  try {
+    await fbDb.collection('users').doc(uid).delete();
+    toast('ปฏิเสธคำขอแล้ว');
+    loadPendingUsers();
+  } catch (e) { toast('ปฏิเสธไม่สำเร็จ: ' + thaiAuthError(e)); }
+};
+
+// ---- ผู้ใช้ทั้งหมด: partner เปลี่ยนบทบาท (Staff/Manager/Partner) ได้ทุกเมื่อ ----
+async function loadAllUsers() {
+  const wrap = $('cloudUsersList');
+  if (!wrap) return;
+  try {
+    const snap = await fbDb.collection('users').where('approved', '==', true).get();
+    if (snap.empty) { wrap.innerHTML = '<div class="wf-empty">ยังไม่มีผู้ใช้ที่อนุมัติแล้ว</div>'; return; }
+    let h = '';
+    snap.forEach(d => {
+      const u = d.data();
+      const r = u.role || 'staff';
+      const isMe = cloudUser && d.id === cloudUser.uid;
+      const opt = v => `<option value="${v}"${r === v ? ' selected' : ''}>${CLOUD_ROLE_LABELS[v]}</option>`;
+      h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 0; border-bottom:1px solid var(--border)">`
+        + `<span style="flex:1; min-width:180px"><b>${escapeHtml(u.name || '(ไม่ระบุชื่อ)')}</b> · ${escapeHtml(u.email || '')}${isMe ? ' <span class="hint">(คุณ)</span>' : ''}</span>`
+        + `<select id="userRole_${d.id}" style="width:auto; padding:6px 10px; font-size:.85rem">${opt('staff')}${opt('manager')}${opt('partner')}</select>`
+        + `<button class="btn-outline btn-sm" onclick="cloudChangeRole('${d.id}')" type="button">บันทึกบทบาท</button>`
+        + `</div>`;
+    });
+    wrap.innerHTML = h;
+  } catch (e) {
+    wrap.innerHTML = '<div class="wf-empty">โหลดรายชื่อไม่สำเร็จ: ' + escapeHtml(thaiAuthError(e)) + '</div>';
+  }
+}
+window.cloudChangeRole = async function (uid) {
+  const sel = $('userRole_' + uid);
+  if (!sel) return;
+  const role = sel.value;
+  if (cloudUser && uid === cloudUser.uid && role !== 'partner'
+      && !CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())) {
+    if (!confirm('คุณกำลังลดบทบาทของตัวเองจาก Partner — จะไม่เห็นแผงจัดการนี้อีกจนกว่า partner คนอื่นจะคืนสิทธิ์ให้ ยืนยัน?')) return;
+  }
+  try {
+    await fbDb.collection('users').doc(uid).update({ role, roleChangedBy: cloudUser.email || '', roleChangedAt: new Date().toISOString() });
+    toast(`เปลี่ยนบทบาทเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้คนนั้นต้องรีเฟรชหน้า/ล็อกอินใหม่เพื่อให้สิทธิ์ใหม่มีผล`);
+    if (cloudUser && uid === cloudUser.uid) { cloudRole = role; renderCloudUI(); }
+    else loadAllUsers();
+  } catch (e) { toast('เปลี่ยนบทบาทไม่สำเร็จ: ' + thaiAuthError(e)); }
+};
 $('btnCloudSaveCfg').addEventListener('click', () => {
   try {
     const cfg = parseConfigText($('cloudCfgText').value);
@@ -2235,12 +2529,171 @@ $('btnCloudSyncNow').addEventListener('click', async () => {
   await cloudPushNow();
 });
 
+// ---- สมัครใช้งานใหม่ (รอ partner อนุมัติ) ----
+$('btnCloudShowSignup').addEventListener('click', () => { cloudSignupMode = true; renderCloudUI(); });
+$('btnCloudCancelSignup').addEventListener('click', () => { cloudSignupMode = false; renderCloudUI(); });
+$('btnCloudSignup').addEventListener('click', async () => {
+  const name = $('signupName').value.trim();
+  const email = $('signupEmail').value.trim();
+  const p1 = $('signupPass').value, p2 = $('signupPass2').value;
+  if (!name) { toast('กรุณากรอกชื่อ-นามสกุล'); return; }
+  if (!email) { toast('กรุณากรอกอีเมล'); return; }
+  if (p1.length < 6) { toast('รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'); return; }
+  if (p1 !== p2) { toast('รหัสผ่านสองช่องไม่ตรงกัน'); return; }
+  try {
+    const cred = await fbAuth.createUserWithEmailAndPassword(email, p1);
+    await fbDb.collection('users').doc(cred.user.uid).set({
+      email, name, approved: false, role: 'staff', requestedAt: new Date().toISOString()
+    });
+    $('signupPass').value = ''; $('signupPass2').value = '';
+    cloudSignupMode = false;
+    toast('สมัครสำเร็จ — รอ partner อนุมัติ');
+  } catch (e) {
+    toast('สมัครไม่สำเร็จ: ' + thaiAuthError(e));
+  }
+});
+$('btnCloudCheckApproval').addEventListener('click', async () => {
+  await checkApproval();
+  if (cloudApproved) { toast('ได้รับอนุมัติแล้ว — กำลังซิงค์ข้อมูล...'); startSync(); }
+  else { toast('ยังไม่ได้รับอนุมัติ — ลองใหม่ภายหลัง หรือติดต่อ partner'); }
+  renderCloudUI();
+});
+$('btnCloudLogoutPending').addEventListener('click', async () => {
+  try { await fbAuth.signOut(); toast('ออกจากระบบแล้ว — ใช้โหมดออฟไลน์ต่อได้'); } catch (e) {}
+});
+
+/* ---------- รายการงาน (แดชบอร์ดหลังล็อกอิน) ---------- */
+function jobStatusOf(c) {
+  const wf = ensureWorkflow(c);
+  if (wf.status === 'approved') return 'done';
+  if (wf.status === 'submitted') return 'submitted';
+  if (wf.status === 'reviewed') return 'reviewed';
+  if (wf.returned) return 'returned';
+  if ((c.name || '').trim()) return 'inprogress';
+  return 'notstarted';
+}
+const JOB_GROUPS = [
+  { key: 'notstarted', title: 'ยังไม่ได้ทำ', cls: 'wf-draft' },
+  { key: 'inprogress', title: 'อยู่ระหว่างกรอกข้อมูล', cls: 'wf-draft' },
+  { key: 'returned', title: 'ส่งกลับมาแก้ไข', cls: 'wf-returned' },
+  { key: 'submitted', title: 'ส่งให้ตรวจ (รอตรวจสอบ)', cls: 'wf-submitted' },
+  { key: 'reviewed', title: 'ผ่านการตรวจ (รออนุมัติ)', cls: 'wf-reviewed' },
+  { key: 'done', title: 'เสร็จเรียบร้อยแล้ว', cls: 'wf-approved' }
+];
+function renderJobsDashboard() {
+  const card = $('jobsCard');
+  if (!card) return;
+  if (!cloudUser || !cloudApproved) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const groups = {};
+  db.companies.forEach(c => {
+    const k = jobStatusOf(c);
+    (groups[k] = groups[k] || []).push(c);
+  });
+  let h = '';
+  JOB_GROUPS.forEach(g => {
+    const list = groups[g.key] || [];
+    if (!list.length) return;
+    h += `<div class="assign-head" style="margin-top:12px; margin-bottom:4px">`
+      + `<span class="wf-badge ${g.cls}" style="font-size:.78rem; padding:3px 12px">${g.title} · ${list.length} งาน</span></div>`;
+    list.forEach(c => {
+      const wf = ensureWorkflow(c);
+      const who = (wf.status === 'submitted' && wf.assigned && wf.assigned.reviewer) ? ' · ส่งให้ ' + escapeHtml(wf.assigned.reviewer)
+                : (wf.status === 'reviewed' && wf.assigned && wf.assigned.approver) ? ' · ส่งให้ ' + escapeHtml(wf.assigned.approver) : '';
+      h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0 6px 4px; border-bottom:1px solid var(--border)">`
+        + `<span style="flex:1; min-width:160px">${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')} <span class="hint">รอบปี ${c.year || '-'}${who}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>`
+        + `<button class="btn-outline btn-sm" onclick="openJob('${c.id}')" type="button">เปิดงาน →</button>`
+        + `</div>`;
+    });
+  });
+  $('jobsList').innerHTML = h || '<div class="wf-empty">ยังไม่มีงาน — เริ่มเพิ่มบริษัทที่ขั้นตอนที่ 1 ด้านล่าง</div>';
+}
+window.openJob = function (id) {
+  if (!db.companies.some(c => c.id === id)) return;
+  db.activeId = id;
+  saveDB();
+  renderCompanySelect();
+  loadCompanyToForm();
+  const st = jobStatusOf(activeCompany());
+  goToStep((st === 'submitted' || st === 'reviewed' || st === 'done') ? 5
+         : (st === 'inprogress' || st === 'returned') ? 3 : 1);
+  toast('เปิดงาน: ' + (activeCompany().name || '(ยังไม่ตั้งชื่อบริษัท)'));
+};
+
+/* ---------- Wizard: แบ่งหน้าเป็นขั้นตอน 1-7 ---------- */
+const WIZARD_STEPS = [1, 2, 3, 4, 5, 6];
+const WIZARD_STEP_LABELS = {
+  1: 'บริษัท / อัตราภาษี', 2: 'นำเข้างบทดลอง',
+  3: 'ประมาณการกำไร', 4: 'ผลการคำนวณ', 5: 'ตรวจสอบ/อนุมัติ', 6: 'ประวัติ'
+};
+const WIZARD_LAST = 6;
+let currentStep = 1;
+
+function setResultVisible(has) {
+  $('resultEmpty').style.display = has ? 'none' : 'block';
+  $('resultInner').style.display = has ? 'block' : 'none';
+}
+
+function stepComplete(n) {
+  const c = activeCompany();
+  if (!c) return false;
+  if (n === 1) return !!($('coName').value.trim() && /^\d{13}$/.test($('coTaxId').value.trim()) && $('coYearEnd').value.trim()
+    && document.querySelector('input[name="entityType"]:checked'));
+  if (n === 2) return true;
+  if (n === 3) return $('inProfit').value.trim() !== '';
+  if (n === 4) return !!lastResult;
+  if (n === 5) return ensureWorkflow(c).status === 'approved';
+  if (n === 6) return true;
+  return false;
+}
+
+function stepCardEl(n) { return document.querySelector('.wizard-page[data-step="' + n + '"]'); }
+
+function renderProgressBar() {
+  const row = $('wizardProgressRow');
+  if (!row) return;
+  row.innerHTML = WIZARD_STEPS.map((n, i) => {
+    const done = stepComplete(n);
+    const active = n === currentStep;
+    const circleCls = active ? 'wz-current' : (done ? 'wz-done' : '');
+    const circleContent = (done && !active) ? '✓' : n;
+    const circle = `<button type="button" class="wz-circle ${circleCls}" onclick="goToStep(${n})">${circleContent}</button>`;
+    if (i === 0) return circle;
+    const prevDone = stepComplete(WIZARD_STEPS[i - 1]);
+    return `<span class="wz-line${prevDone ? ' wz-line-done' : ''}"></span>${circle}`;
+  }).join('');
+  $('wizardProgressLabel').textContent = `ขั้นตอนที่ ${currentStep} จาก 6 — ${WIZARD_STEP_LABELS[currentStep]}`;
+}
+
+function renderWizard() {
+  WIZARD_STEPS.forEach(n => {
+    const el = stepCardEl(n);
+    if (el) el.style.display = (n === currentStep) ? '' : 'none';
+  });
+  renderProgressBar();
+  $('btnWzBack').style.visibility = currentStep === 1 ? 'hidden' : 'visible';
+  $('btnWzNext').style.visibility = currentStep === WIZARD_LAST ? 'hidden' : 'visible';
+}
+
+window.goToStep = function (n) {
+  if (n < 1 || n > WIZARD_LAST) return;
+  currentStep = n;
+  renderWizard();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+$('btnWzBack').addEventListener('click', () => goToStep(currentStep - 1));
+$('btnWzNext').addEventListener('click', () => goToStep(currentStep + 1));
+document.addEventListener('input', e => { if (e.target.closest('.wizard-page')) renderProgressBar(); });
+document.addEventListener('change', e => { if (e.target.closest('.wizard-page')) renderProgressBar(); });
+
 /* ---------- init ---------- */
 loadDB();
 renderCompanySelect();
 loadCompanyToForm();
 renderEmployeeList();
 cloudInit();
+renderWizard();
 </script>
 </body>
 </html>
