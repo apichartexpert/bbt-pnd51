@@ -96,7 +96,7 @@
   .field.full { grid-column: 1 / -1; }
   .field label { font-size: .85rem; font-weight: 600; color: var(--gray); }
   .field .hint { font-size: .75rem; color: var(--gray); font-weight: 400; }
-  input[type="text"], input[type="number"], select {
+  input[type="text"], input[type="number"], input[type="password"], textarea, select {
     padding: 9px 12px;
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -339,6 +339,41 @@
     <h1>โปรแกรมคำนวณประมาณการ ภ.ง.ด.51</h1>
     <p>ภาษีเงินได้นิติบุคคลครึ่งรอบระยะเวลาบัญชี (ประมาณการกำไรสุทธิ) — เครื่องมือช่วยคำนวณเบื้องต้น</p>
   </header>
+
+  <!-- ===== ระบบกลาง (Cloud Sync) ===== -->
+  <div class="card screen-only">
+    <h2><span class="step">☁</span> ระบบกลาง — ใช้ข้อมูลร่วมกันหลายเครื่อง</h2>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px">
+      <span style="font-weight:600; color:var(--gray)">สถานะ:</span>
+      <span id="cloudBadge" class="wf-badge wf-draft">ออฟไลน์ (ข้อมูลอยู่ในเครื่องนี้)</span>
+      <span class="hint" id="cloudInfo"></span>
+    </div>
+    <div id="cloudSetup" style="display:none">
+      <p class="note" style="margin-top:0">วางค่า <b>firebaseConfig</b> ที่ได้จากการสร้างโปรเจกต์ Firebase ของสำนักงาน (ทำครั้งเดียวต่อเครื่อง) — ยังไม่มี? ดูขั้นตอนสร้างในสมุด HANDOFF.md หรือถาม Claude</p>
+      <textarea id="cloudCfgText" rows="5" style="width:100%; font-family:monospace; font-size:.85rem" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", ... };'></textarea>
+      <div class="btn-row">
+        <button class="btn-primary btn-sm" id="btnCloudSaveCfg" type="button">บันทึกการตั้งค่า</button>
+      </div>
+    </div>
+    <div id="cloudLogin" style="display:none">
+      <div class="grid">
+        <div class="field"><label>อีเมล</label><input type="text" id="cloudEmail" placeholder="you@office.com" autocomplete="username"></div>
+        <div class="field"><label>รหัสผ่าน</label><input type="password" id="cloudPass" placeholder="••••••••" autocomplete="current-password"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn-primary btn-sm" id="btnCloudLogin" type="button">เข้าสู่ระบบ</button>
+        <button class="btn-outline btn-sm" id="btnCloudClearCfg" type="button">ล้างการตั้งค่า</button>
+      </div>
+      <p class="note">บัญชีผู้ใช้ถูกสร้างโดยผู้ดูแลใน Firebase Console (Authentication → Users → Add user) — แอปไม่เปิดให้สมัครเอง เพื่อกันคนนอกเข้าถึงข้อมูลภาษี</p>
+    </div>
+    <div id="cloudConnected" style="display:none">
+      <div class="btn-row" style="margin-top:4px">
+        <button class="btn-outline btn-sm" id="btnCloudSyncNow" type="button">🔄 ซิงค์เดี๋ยวนี้</button>
+        <button class="btn-outline btn-sm" id="btnCloudLogout" type="button">ออกจากระบบ</button>
+      </div>
+    </div>
+    <p class="note">เมื่อเชื่อมต่อแล้ว ข้อมูลบริษัท/พนักงาน/สถานะ Sign-off จะบันทึกขึ้นระบบกลางอัตโนมัติ และอัปเดตถึงกันทุกเครื่องที่ล็อกอิน · เมื่อไม่ล็อกอิน แอปยังใช้แบบออฟไลน์ได้ตามปกติ (ข้อมูลอยู่ในเครื่อง)</p>
+  </div>
 
   <!-- ===== บริษัท ===== -->
   <div class="card screen-only">
@@ -700,7 +735,7 @@ function loadDB() {
   }
   if (!db.companies.some(c => c.id === db.activeId)) db.activeId = db.companies[0].id;
 }
-function saveDB() { safeStore.set(JSON.stringify(db)); }
+function saveDB() { safeStore.set(JSON.stringify(db)); cloudSchedulePush(); }
 function newCompany() {
   return { id: 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
            name: '', taxId: '', year: new Date().getFullYear() + 543,
@@ -1987,11 +2022,225 @@ $('btnToggleDetail').addEventListener('click', () => {
   d.style.display = d.style.display === 'none' ? 'block' : 'none';
 });
 
+/* ---------- ระบบกลาง (Firebase Cloud Sync) ---------- */
+const CLOUD_CFG_KEY = 'pnd51_cloud_config_v1';
+let fbAuth = null, fbDb = null;
+let cloudUser = null, cloudReady = false, cloudLoadFailed = false, cloudPushing = false;
+let applyingRemote = false, pushTimer = null, unsubCompanies = null;
+
+function getCloudConfig() {
+  try { const raw = localStorage.getItem(CLOUD_CFG_KEY); return raw ? JSON.parse(raw) : null; }
+  catch (e) { return null; }
+}
+// รับได้ทั้ง JSON ล้วน และโค้ด const firebaseConfig = {...} ที่ก๊อบมาจาก Firebase Console
+function parseConfigText(text) {
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('ไม่พบข้อมูล config ในข้อความที่วาง');
+  let t = m[0]
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
+    .replace(/'/g, '"')
+    .replace(/,\s*\}/g, '}');
+  const cfg = JSON.parse(t);
+  if (!cfg.apiKey || !cfg.projectId) throw new Error('config ไม่ครบ — ต้องมี apiKey และ projectId');
+  return cfg;
+}
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = () => rej(new Error('โหลดสคริปต์ไม่สำเร็จ'));
+    document.head.appendChild(s);
+  });
+}
+async function cloudInit() {
+  renderCloudUI();
+  const cfg = getCloudConfig();
+  if (!cfg) return;
+  try {
+    const V = '10.12.2';
+    if (!window.firebase) {
+      await loadScript(`https://www.gstatic.com/firebasejs/${V}/firebase-app-compat.js`);
+      await loadScript(`https://www.gstatic.com/firebasejs/${V}/firebase-auth-compat.js`);
+      await loadScript(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore-compat.js`);
+    }
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+    cloudReady = true;
+    fbAuth.onAuthStateChanged(u => {
+      cloudUser = u;
+      if (u) startSync(); else stopSync();
+      renderCloudUI();
+    });
+  } catch (e) {
+    cloudLoadFailed = true;
+  }
+  renderCloudUI();
+}
+async function startSync() {
+  if (!fbDb || !cloudUser) return;
+  try {
+    // 1) ดึงข้อมูลส่วนกลางมารวมกับในเครื่อง (ใครใหม่กว่าใช้อันนั้น)
+    const snap = await fbDb.collection('companies').get();
+    applyingRemote = true;
+    snap.forEach(d => {
+      const rc = d.data();
+      if (!rc || !rc.id) return;
+      const idx = db.companies.findIndex(x => x.id === rc.id);
+      if (idx >= 0) { if ((rc._syncAt || 0) >= (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; }
+      else db.companies.push(rc);
+    });
+    const meta = await fbDb.collection('meta').doc('employees').get();
+    if (meta.exists) {
+      (meta.data().list || []).forEach(emp => {
+        if (emp && emp.name && !db.employees.some(x => x.name === emp.name)) db.employees.push({ name: emp.name, role: emp.role || '' });
+      });
+      db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+    }
+    if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
+    safeStore.set(JSON.stringify(db));
+    applyingRemote = false;
+    renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
+    // 2) ส่งข้อมูลในเครื่องขึ้นส่วนกลาง
+    await cloudPushNow();
+    // 3) ฟังการเปลี่ยนแปลงจากเครื่องอื่นแบบเรียลไทม์
+    if (unsubCompanies) unsubCompanies();
+    unsubCompanies = fbDb.collection('companies').onSnapshot(s => {
+      if (cloudPushing) return;
+      let changed = false;
+      applyingRemote = true;
+      s.docChanges().forEach(ch => {
+        if (ch.type === 'removed') return;
+        const rc = ch.doc.data();
+        if (!rc || !rc.id) return;
+        const idx = db.companies.findIndex(x => x.id === rc.id);
+        if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; } }
+        else { db.companies.push(rc); changed = true; }
+      });
+      applyingRemote = false;
+      if (changed) {
+        safeStore.set(JSON.stringify(db));
+        renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
+        toast('มีข้อมูลอัปเดตจากระบบกลาง');
+      }
+    });
+  } catch (e) {
+    toast('ซิงค์กับระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
+  }
+  renderCloudUI();
+}
+function stopSync() { if (unsubCompanies) { unsubCompanies(); unsubCompanies = null; } }
+async function cloudPushNow() {
+  if (!fbDb || !cloudUser) return;
+  cloudPushing = true;
+  try {
+    const now = Date.now();
+    const batch = fbDb.batch();
+    db.companies.forEach(c => {
+      c._syncAt = now;
+      batch.set(fbDb.collection('companies').doc(c.id), JSON.parse(JSON.stringify(c)));
+    });
+    batch.set(fbDb.collection('meta').doc('employees'), { list: JSON.parse(JSON.stringify(db.employees)), _syncAt: now });
+    await batch.commit();
+    safeStore.set(JSON.stringify(db));
+    $('cloudInfo').textContent = 'ซิงค์ล่าสุด ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  } catch (e) {
+    toast('บันทึกขึ้นระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
+  }
+  cloudPushing = false;
+}
+function cloudSchedulePush() {
+  if (!cloudUser || applyingRemote) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(cloudPushNow, 1500);
+}
+function thaiAuthError(e) {
+  const code = (e && e.code) || '';
+  if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+  if (code.includes('invalid-email')) return 'รูปแบบอีเมลไม่ถูกต้อง';
+  if (code.includes('too-many-requests')) return 'ลองผิดหลายครั้งเกินไป โปรดรอสักครู่';
+  if (code.includes('network')) return 'เชื่อมต่ออินเทอร์เน็ตไม่ได้';
+  if (code.includes('permission-denied')) return 'ไม่มีสิทธิ์เข้าถึงข้อมูล — ตรวจ Security Rules ใน Firebase Console';
+  if (code.includes('api-key')) return 'ค่า config ไม่ถูกต้อง (apiKey ผิด)';
+  return (e && e.message) || String(e);
+}
+function renderCloudUI() {
+  const badge = $('cloudBadge');
+  const cfg = getCloudConfig();
+  $('cloudSetup').style.display = 'none';
+  $('cloudLogin').style.display = 'none';
+  $('cloudConnected').style.display = 'none';
+  if (cloudLoadFailed) {
+    badge.className = 'wf-badge wf-submitted';
+    badge.textContent = 'เชื่อมต่อระบบกลางไม่ได้ — ใช้โหมดออฟไลน์';
+    $('cloudInfo').textContent = 'หน้านี้อาจถูกบล็อกการเชื่อมต่อ (เช่น หน้าตัวอย่าง Artifact) — ใช้บน GitHub Pages หรือเปิดไฟล์โดยตรง';
+    return;
+  }
+  if (!cfg) {
+    badge.className = 'wf-badge wf-draft';
+    badge.textContent = 'ออฟไลน์ (ข้อมูลอยู่ในเครื่องนี้)';
+    $('cloudSetup').style.display = 'block';
+    return;
+  }
+  if (!cloudReady) {
+    badge.className = 'wf-badge wf-submitted';
+    badge.textContent = 'กำลังเชื่อมต่อ...';
+    return;
+  }
+  if (!cloudUser) {
+    badge.className = 'wf-badge wf-submitted';
+    badge.textContent = 'ยังไม่ได้เข้าสู่ระบบ';
+    $('cloudLogin').style.display = 'block';
+    return;
+  }
+  badge.className = 'wf-badge wf-approved';
+  badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '');
+  $('cloudConnected').style.display = 'block';
+}
+$('btnCloudSaveCfg').addEventListener('click', () => {
+  try {
+    const cfg = parseConfigText($('cloudCfgText').value);
+    localStorage.setItem(CLOUD_CFG_KEY, JSON.stringify(cfg));
+    toast('บันทึกการตั้งค่าแล้ว — กำลังเชื่อมต่อ...');
+    cloudInit();
+  } catch (e) {
+    toast('ตั้งค่าไม่สำเร็จ: ' + (e.message || e));
+  }
+});
+$('btnCloudClearCfg').addEventListener('click', () => {
+  if (!confirm('ล้างการตั้งค่าระบบกลางของเครื่องนี้? (ข้อมูลในเครื่องและในระบบกลางไม่ถูกลบ)')) return;
+  localStorage.removeItem(CLOUD_CFG_KEY);
+  try { if (fbAuth) fbAuth.signOut(); } catch (e) {}
+  cloudReady = false; cloudUser = null; cloudLoadFailed = false; stopSync();
+  renderCloudUI();
+  toast('ล้างการตั้งค่าแล้ว — กลับสู่โหมดออฟไลน์');
+});
+$('btnCloudLogin').addEventListener('click', async () => {
+  const email = $('cloudEmail').value.trim();
+  const pass = $('cloudPass').value;
+  if (!email || !pass) { toast('กรุณากรอกอีเมลและรหัสผ่าน'); return; }
+  try {
+    await fbAuth.signInWithEmailAndPassword(email, pass);
+    $('cloudPass').value = '';
+    toast('เข้าสู่ระบบสำเร็จ — กำลังซิงค์ข้อมูล...');
+  } catch (e) {
+    toast('เข้าสู่ระบบไม่สำเร็จ: ' + thaiAuthError(e));
+  }
+});
+$('btnCloudLogout').addEventListener('click', async () => {
+  try { await fbAuth.signOut(); toast('ออกจากระบบแล้ว — ใช้โหมดออฟไลน์ต่อได้'); } catch (e) {}
+});
+$('btnCloudSyncNow').addEventListener('click', async () => {
+  toast('กำลังซิงค์...');
+  await cloudPushNow();
+});
+
 /* ---------- init ---------- */
 loadDB();
 renderCompanySelect();
 loadCompanyToForm();
 renderEmployeeList();
+cloudInit();
 </script>
 </body>
 </html>
