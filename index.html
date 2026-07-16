@@ -366,6 +366,9 @@
     #printReport .hdr .lbl { color: #666; font-size: 11px; }
     #printReport .box { border: 1px solid #999; border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
     #printReport .box.main { max-width: 680px; margin-left: auto; margin-right: auto; }
+    #printReport .cols { display: flex; gap: 10px; align-items: flex-start; }
+    #printReport .cols .col-l { flex: 1.45; min-width: 0; }
+    #printReport .cols .col-r { flex: 1; min-width: 0; }
     #printReport table { width: 100%; border-collapse: collapse; }
     #printReport td { padding: 4px 4px; vertical-align: top; }
     #printReport td.amt { text-align: right; white-space: nowrap; }
@@ -1737,28 +1740,32 @@ const PRINT_CSS = `
   .hdr .h-l { flex:1.2; text-align:left; }
   .hdr .h-c { flex:1; text-align:center; }
   .hdr .h-r { flex:1; text-align:right; }
-  .hdr .lbl { color:#666; font-size:11px; }
+  .hdr .lbl { color:#666; font-size:12px; }
   .box { border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; }
   .box.main { max-width:680px; margin-left:auto; margin-right:auto; }
+  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ · ขวา = ประมาณการ/คำนวณภาษี */
+  .cols { display:flex; gap:10px; align-items:flex-start; }
+  .cols .col-l { flex:1.45; min-width:0; }
+  .cols .col-r { flex:1; min-width:0; }
   table { width:100%; border-collapse:collapse; }
   td { padding:2.5px 4px; vertical-align:top; }
   td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:18px; }
   tr.total td { border-top:1.5px solid #000; font-weight:700; padding-top:5px; }
   .warn-print { border:1px solid #b7791f; background:#fdf3e0; border-radius:6px; padding:7px 12px; margin-top:7px; font-size:12px; }
-  .footer { margin-top:10px; font-size:11px; color:#666; }
+  .footer { margin-top:10px; font-size:12px; color:#666; }
   .sign { margin-top:14px; display:flex; justify-content:flex-end; gap:16px; }
   .sign .line { flex:1; max-width:220px; text-align:center; font-size:12px; }
   .sign .line hr { border:none; border-top:1px dotted #333; margin-bottom:4px; margin-top:24px; }
-  .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:12px; }
-  .cmp-meta { color:#5a6472; font-size:11px; margin-bottom:4px; }
-  table.pl { width:100%; border-collapse:collapse; font-size:11px; }
+  .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:12.5px; }
+  .cmp-meta { color:#5a6472; font-size:12px; margin-bottom:4px; }
+  table.pl { width:100%; border-collapse:collapse; font-size:12px; }
   table.pl th, table.pl td { padding:2px 3px; border-bottom:1px solid #d6dde6; }
-  table.pl thead th { background:#f3faea; color:#557f25; text-align:right; white-space:nowrap; font-size:10.5px; }
+  table.pl thead th { background:#f3faea; color:#557f25; text-align:right; white-space:nowrap; font-size:11.5px; }
   table.pl thead th:first-child { text-align:left; }
   table.pl thead th.grp { text-align:center; border-bottom:1px solid #6fae2b; }
   table.pl td.name { text-align:left; white-space:nowrap; }
   table.pl td.amt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; width:auto; padding-left:3px; }
-  table.pl td.pct { text-align:right; color:#5a6472; font-size:10px; white-space:nowrap; }
+  table.pl td.pct { text-align:right; color:#5a6472; font-size:11px; white-space:nowrap; }
   table.pl tr.subtotal td { font-weight:700; background:#fafbfd; }
   table.pl tr.net td { font-weight:800; border-top:1.5px solid #557f25; color:#557f25; background:#f3faea; }
   table.pl td.neg, table.pl td.down { color:#c0392b; }
@@ -1911,19 +1918,24 @@ function buildPrintReport() {
         ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
       </div>
     </div>
-    <div class="box main">
-      <table>
-        ${adj.join('')}
-        <tr><td colspan="2"><b>ภาษีคำนวณ</b></td></tr>
-        ${bracketRows}
-        <tr><td><b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b></td><td class="amt"><b>${fmt(r.tax)}</b></td></tr>
-        <tr><td>หัก ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก</td><td class="amt">(${fmt(r.wht)})</td></tr>
-        <tr class="total"><td>ภาษีที่ต้องชำระตามแบบ ภ.ง.ด.51</td><td class="amt">${fmt(payable)} บาท</td></tr>
-        ${r.netPay < 0 ? `<tr><td colspan="2" style="color:#1e7d43">* ภาษีถูกหัก ณ ที่จ่ายเกินภาษีที่คำนวณได้ ${fmt(-r.netPay)} บาท — นำไปเครดิตต่อใน ภ.ง.ด.50</td></tr>` : ''}
-      </table>
-      ${riskPrint}
-    </div>
-    ${comparisonBox}
+    ${(() => {
+      const calcBox = `<div class="box${comparisonBox ? '' : ' main'}">
+        <table>
+          ${adj.join('')}
+          <tr><td colspan="2"><b>ภาษีคำนวณ</b></td></tr>
+          ${bracketRows}
+          <tr><td><b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b></td><td class="amt"><b>${fmt(r.tax)}</b></td></tr>
+          <tr><td>หัก ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก</td><td class="amt">(${fmt(r.wht)})</td></tr>
+          <tr class="total"><td>ภาษีที่ต้องชำระตามแบบ ภ.ง.ด.51</td><td class="amt">${fmt(payable)} บาท</td></tr>
+          ${r.netPay < 0 ? `<tr><td colspan="2" style="color:#1e7d43">* ภาษีถูกหัก ณ ที่จ่ายเกินภาษีที่คำนวณได้ ${fmt(-r.netPay)} บาท — นำไปเครดิตต่อใน ภ.ง.ด.50</td></tr>` : ''}
+        </table>
+        ${riskPrint}
+      </div>`;
+      // มีงบเปรียบเทียบ → วางคู่กัน: ซ้าย = เปรียบเทียบ · ขวา = ประมาณการ/คำนวณภาษี
+      return comparisonBox
+        ? `<div class="cols"><div class="col-l">${comparisonBox}</div><div class="col-r">${calcBox}</div></div>`
+        : calcBox;
+    })()}
     <div class="footer">
       กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
     </div>
