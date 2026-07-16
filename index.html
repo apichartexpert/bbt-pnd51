@@ -356,10 +356,16 @@
   @media print {
     body { background: #fff; padding: 0; }
     .screen-only { display: none !important; }
-    #printReport { display: block; font-size: 13px; }
-    #printReport h1 { font-size: 18px; text-align: center; margin-bottom: 2px; }
-    #printReport .sub-title { text-align: center; color: #444; margin-bottom: 16px; font-size: 12px; }
+    #printReport { display: block; font-size: 14px; }
+    #printReport h1 { font-size: 19px; text-align: center; margin-bottom: 2px; }
+    #printReport .sub-title { text-align: center; color: #444; margin-bottom: 12px; font-size: 12px; }
+    #printReport .hdr { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; border: 1px solid #999; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+    #printReport .hdr .h-l { flex: 1.2; text-align: left; }
+    #printReport .hdr .h-c { flex: 1; text-align: center; }
+    #printReport .hdr .h-r { flex: 1; text-align: right; }
+    #printReport .hdr .lbl { color: #666; font-size: 11px; }
     #printReport .box { border: 1px solid #999; border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
+    #printReport .box.main { max-width: 680px; margin-left: auto; margin-right: auto; }
     #printReport table { width: 100%; border-collapse: collapse; }
     #printReport td { padding: 4px 4px; vertical-align: top; }
     #printReport td.amt { text-align: right; white-space: nowrap; }
@@ -1722,30 +1728,37 @@ window.loadHistory = function (i) {
 // CSS สำหรับเอกสารพิมพ์ (ใช้ในหน้าต่างพิมพ์แยก เพื่อให้พิมพ์ได้ทุกสภาพแวดล้อม)
 const PRINT_CSS = `
   html,body { margin:0; padding:0; }
-  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; font-size:12px; line-height:1.32; }
+  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; font-size:14px; line-height:1.35; }
   #printwrap { padding:10px 12px; transform-origin: top left; }
-  h1 { font-size:16px; text-align:center; margin:0 0 2px; }
-  .sub-title { text-align:center; color:#444; margin-bottom:6px; font-size:11px; }
+  h1 { font-size:19px; text-align:center; margin:0 0 2px; }
+  .sub-title { text-align:center; color:#444; margin-bottom:6px; font-size:12px; }
+  /* หัวเอกสาร 3 กลุ่ม: ซ้าย=บริษัท · กลาง=รอบบัญชี/อัตราภาษี · ขวา=สถานะ/วันที่ */
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; font-size:13px; }
+  .hdr .h-l { flex:1.2; text-align:left; }
+  .hdr .h-c { flex:1; text-align:center; }
+  .hdr .h-r { flex:1; text-align:right; }
+  .hdr .lbl { color:#666; font-size:11px; }
   .box { border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; }
+  .box.main { max-width:680px; margin-left:auto; margin-right:auto; }
   table { width:100%; border-collapse:collapse; }
   td { padding:2.5px 4px; vertical-align:top; }
-  td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:18px; }
   tr.total td { border-top:1.5px solid #000; font-weight:700; padding-top:5px; }
-  .warn-print { border:1px solid #b7791f; background:#fdf3e0; border-radius:6px; padding:7px 12px; margin-top:7px; font-size:11px; }
-  .footer { margin-top:10px; font-size:10px; color:#666; }
+  .warn-print { border:1px solid #b7791f; background:#fdf3e0; border-radius:6px; padding:7px 12px; margin-top:7px; font-size:12px; }
+  .footer { margin-top:10px; font-size:11px; color:#666; }
   .sign { margin-top:14px; display:flex; justify-content:flex-end; gap:16px; }
-  .sign .line { flex:1; max-width:220px; text-align:center; font-size:11px; }
+  .sign .line { flex:1; max-width:220px; text-align:center; font-size:12px; }
   .sign .line hr { border:none; border-top:1px dotted #333; margin-bottom:4px; margin-top:24px; }
-  .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:11px; }
-  .cmp-meta { color:#5a6472; font-size:10px; margin-bottom:4px; }
-  table.pl { width:100%; border-collapse:collapse; font-size:9.5px; }
-  table.pl th, table.pl td { padding:2.5px 4px; border-bottom:1px solid #d6dde6; }
-  table.pl thead th { background:#f3faea; color:#557f25; text-align:right; white-space:nowrap; font-size:9px; }
+  .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:12px; }
+  .cmp-meta { color:#5a6472; font-size:11px; margin-bottom:4px; }
+  table.pl { width:100%; border-collapse:collapse; font-size:11px; }
+  table.pl th, table.pl td { padding:2px 3px; border-bottom:1px solid #d6dde6; }
+  table.pl thead th { background:#f3faea; color:#557f25; text-align:right; white-space:nowrap; font-size:10.5px; }
   table.pl thead th:first-child { text-align:left; }
   table.pl thead th.grp { text-align:center; border-bottom:1px solid #6fae2b; }
   table.pl td.name { text-align:left; white-space:nowrap; }
-  table.pl td.amt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  table.pl td.pct { text-align:right; color:#5a6472; font-size:9px; white-space:nowrap; }
+  table.pl td.amt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; width:auto; padding-left:3px; }
+  table.pl td.pct { text-align:right; color:#5a6472; font-size:10px; white-space:nowrap; }
   table.pl tr.subtotal td { font-weight:700; background:#fafbfd; }
   table.pl tr.net td { font-weight:800; border-top:1.5px solid #557f25; color:#557f25; background:#f3faea; }
   table.pl td.neg, table.pl td.down { color:#c0392b; }
@@ -1882,16 +1895,23 @@ function buildPrintReport() {
   $('printReport').innerHTML = `
     <h1>สรุปประมาณการภาษีเงินได้นิติบุคคลครึ่งปี (ภ.ง.ด.51)</h1>
     <div class="sub-title">เอกสารประกอบการคำนวณภายใน — ไม่ใช่แบบแสดงรายการของกรมสรรพากร</div>
-    <div style="text-align:center; margin-bottom:12px; font-size:12px"><b>สถานะ:</b> ${wfSt.label}</div>
-    <div class="box">
-      <table>
-        <tr><td style="width:32%"><b>ชื่อบริษัท</b></td><td>${c.name || '-'}${c.jobCode ? ' &nbsp;(Job Code: ' + c.jobCode + ')' : ''}</td></tr>
-        <tr><td><b>เลขประจำตัวผู้เสียภาษี</b></td><td>${c.taxId || '-'}</td></tr>
-        <tr><td><b>รอบระยะเวลาบัญชี (ปี พ.ศ.)</b></td><td>${c.year}${c.yearEnd ? ' (สิ้นรอบ ' + c.yearEnd + ')' : ''}</td></tr>
-        <tr><td><b>ประเภทอัตราภาษี</b></td><td>${r.entityType === 'sme' ? 'SME (อัตราขั้นบันได)' : 'บริษัททั่วไป (20%)'}</td></tr>
-      </table>
+    <div class="hdr">
+      <div class="h-l">
+        <b>${c.name || '-'}</b>${c.jobCode ? ' &nbsp;(Job Code: ' + c.jobCode + ')' : ''}<br>
+        <span class="lbl">เลขประจำตัวผู้เสียภาษี</span> ${c.taxId || '-'}
+      </div>
+      <div class="h-c">
+        <span class="lbl">รอบระยะเวลาบัญชี (ปี พ.ศ.)</span><br>
+        <b>${c.year}</b>${c.yearEnd ? ' (สิ้นรอบ ' + c.yearEnd + ')' : ''}<br>
+        ${r.entityType === 'sme' ? 'SME (อัตราขั้นบันได)' : 'บริษัททั่วไป (20%)'}
+      </div>
+      <div class="h-r">
+        <span class="lbl">สถานะ</span> <b>${wfSt.label}</b><br>
+        <span class="lbl">จัดทำเมื่อ</span> ${now.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}
+        ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+      </div>
     </div>
-    <div class="box">
+    <div class="box main">
       <table>
         ${adj.join('')}
         <tr><td colspan="2"><b>ภาษีคำนวณ</b></td></tr>
@@ -1905,9 +1925,7 @@ function buildPrintReport() {
     </div>
     ${comparisonBox}
     <div class="footer">
-      จัดทำเมื่อ ${now.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}
-      ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
-      · กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
+      กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
     </div>
     <div class="sign" style="justify-content:space-between">
       ${printSign('preparer', 'ผู้จัดทำ (Preparer)', c.preparer, wfP)}
