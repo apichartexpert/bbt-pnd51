@@ -466,10 +466,10 @@
       <button class="btn-danger-outline" id="btnDeleteCompany" type="button">ลบบริษัทนี้</button>
     </div>
     <div class="btn-row" style="margin-top:12px">
-      <button class="btn-outline btn-sm" id="btnExport" type="button">⭳ Export ข้อมูลทั้งหมด</button>
-      <button class="btn-outline btn-sm" id="btnExportOne" type="button">⭳ Export บริษัทนี้</button>
+      <button class="btn-outline btn-sm" id="btnExport" type="button">⭳ Export ข้อมูลทั้งหมด (Excel)</button>
+      <button class="btn-outline btn-sm" id="btnExportOne" type="button">⭳ Export บริษัทนี้ (Excel)</button>
       <button class="btn-outline btn-sm" id="btnImport" type="button">⭱ Import / เพิ่มบริษัทจากไฟล์</button>
-      <input type="file" id="importData" accept=".json,application/json" style="display:none">
+      <input type="file" id="importData" accept=".xlsx,.xls,.json" style="display:none">
     </div>
     <div class="grid" style="margin-top:14px">
       <div class="field">
@@ -497,7 +497,7 @@
       <button class="btn-outline btn-sm" id="btnManageEmp" type="button" style="float:right;font-weight:400">👤 จัดการฐานข้อมูลพนักงาน</button>
     </div>
     <div id="empPanel" style="display:none; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px">
-      <div class="company-bar" style="align-items:flex-end">
+      <div class="company-bar" id="empAddRow" style="align-items:flex-end">
         <div class="field">
           <label>ชื่อพนักงาน</label>
           <input type="text" id="empName" placeholder="เช่น สมชาย ใจดี">
@@ -509,11 +509,11 @@
         <button class="btn-primary btn-sm" id="btnAddEmp" type="button">+ เพิ่มพนักงาน</button>
       </div>
       <div id="empList" style="margin-top:10px"></div>
-      <div class="btn-row" style="margin-top:10px">
-        <button class="btn-outline btn-sm" id="btnExportEmp" type="button">⭳ Export พนักงาน/ผู้รับผิดชอบ</button>
-        <button class="btn-outline btn-sm" id="btnImportEmp" type="button">⭱ Import พนักงาน/ผู้รับผิดชอบ</button>
+      <div class="btn-row" id="empIoRow" style="margin-top:10px">
+        <button class="btn-outline btn-sm" id="btnExportEmp" type="button">⭳ Export พนักงาน (Excel)</button>
+        <button class="btn-outline btn-sm" id="btnImportEmp" type="button">⭱ Import พนักงาน</button>
       </div>
-      <p class="note" style="margin-top:6px">Import รับได้ทั้งไฟล์พนักงานล้วน และไฟล์ข้อมูลบริษัท (จะดึงพนักงาน + ผู้รับผิดชอบที่กำหนดไว้มาให้)</p>
+      <p class="note" id="empIoNote" style="margin-top:6px">Import รับไฟล์ Excel ที่ส่งออกจากโปรแกรม และไฟล์ .json แบบเดิม (จะดึงพนักงาน + ผู้รับผิดชอบที่กำหนดไว้มาให้)</p>
     </div>
     <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
       <div class="field">
@@ -953,10 +953,20 @@ document.querySelectorAll('input[name="entityType"]').forEach(r =>
   r.addEventListener('change', () => { syncRadioStyle(); saveCompanyFromForm(); }));
 
 /* ---------- ฐานข้อมูลพนักงาน & ผู้รับผิดชอบ ---------- */
-function assignSelectHtml(current) {
-  let opts = '<option value="">— ไม่ระบุ —</option>';
+// ความสามารถตามบทบาทบัญชี: staff = จัดทำ · manager = จัดทำ/ตรวจสอบ · partner = ทุกหน้าที่
+// พนักงานที่ไม่มี rtype (เพิ่มมือ/ข้อมูลเก่าโหมดออฟไลน์) ไม่ถูกกรอง
+function empCapOk(e, cap) {
+  if (!e.rtype) return true;
+  if (cap === 'preparer') return true;
+  if (cap === 'reviewer') return e.rtype === 'manager' || e.rtype === 'partner';
+  if (cap === 'approver') return e.rtype === 'partner';
+  return true;
+}
+function empOptionsFor(cap, current, placeholder) {
+  let opts = `<option value="">— ${placeholder || 'ไม่ระบุ'} —</option>`;
   const names = [];
   (db.employees || []).forEach(e => {
+    if (!empCapOk(e, cap)) return;
     names.push(e.name);
     opts += `<option value="${escapeHtml(e.name)}">${escapeHtml(e.name)}${e.role ? ' (' + escapeHtml(e.role) + ')' : ''}</option>`;
   });
@@ -965,14 +975,28 @@ function assignSelectHtml(current) {
 }
 function populateAssignSelects() {
   const c = activeCompany();
-  [['coPreparer', c.preparer], ['coReviewer', c.reviewer], ['coApprover', c.approver]].forEach(([id, cur]) => {
+  [['coPreparer', c.preparer, 'preparer'], ['coReviewer', c.reviewer, 'reviewer'], ['coApprover', c.approver, 'approver']].forEach(([id, cur, cap]) => {
     cur = cur || '';
-    $(id).innerHTML = assignSelectHtml(cur);
+    $(id).innerHTML = empOptionsFor(cap, cur, 'ไม่ระบุ');
     $(id).value = cur;
   });
 }
 function renderEmployeeList() {
   const wrap = $('empList');
+  const cloudMode = !!(cloudUser && cloudApproved);   // เชื่อมต่อระบบกลาง: รายชื่อมาจากบัญชีผู้ใช้ แก้มือไม่ได้
+  $('empAddRow').style.display = cloudMode ? 'none' : '';
+  $('empIoNote').style.display = cloudMode ? 'none' : '';
+  if (cloudMode) {
+    if (!db.employees.length) {
+      wrap.innerHTML = '<div class="emp-empty">ยังไม่มีบัญชีผู้ใช้ที่อนุมัติแล้วในระบบกลาง</div>';
+      return;
+    }
+    wrap.innerHTML = '<p class="note" style="margin-top:0">รายชื่อดึงจากบัญชีผู้ใช้ระบบกลางที่อนุมัติแล้ว (จัดการที่การ์ด ☁ ระบบกลาง โดย partner)</p>'
+      + db.employees.map(e =>
+        `<div class="emp-item"><span class="en">${escapeHtml(e.name)}</span>${e.role ? '<span class="er">— ' + escapeHtml(e.role) + '</span>' : ''}</div>`
+      ).join('');
+    return;
+  }
   if (!db.employees || !db.employees.length) {
     wrap.innerHTML = '<div class="emp-empty">ยังไม่มีพนักงานในฐานข้อมูล — เพิ่มด้านบนเพื่อใช้เลือกเป็นผู้รับผิดชอบ</div>';
     return;
@@ -1012,94 +1036,146 @@ window.deleteEmployee = function (i) {
   refreshEmployeesUI();
 };
 
-/* ---------- Export / Import ข้อมูล ---------- */
-function downloadJSON(obj, filename) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
+/* ---------- Export / Import ข้อมูล (ไฟล์ Excel) ---------- */
 function stamp() {
   const d = new Date();
   const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }
+// สร้างสมุด Excel: ชีต Companies (คอลัมน์อ่านง่าย + คอลัมน์ _json เก็บข้อมูลเต็มสำหรับนำเข้ากลับแบบไม่ตกหล่น) + ชีต Employees
+function companiesToWorkbook(companies, employees) {
+  const wb = XLSX.utils.book_new();
+  const rows = (companies || []).map(c => ({
+    'ชื่อบริษัท': c.name || '',
+    'เลขผู้เสียภาษี': c.taxId || '',
+    'รอบปี พ.ศ.': c.year || '',
+    'Job Code': c.jobCode || '',
+    'วันสิ้นรอบบัญชี': c.yearEnd || '',
+    'ประเภท/อัตราภาษี': c.entityType === 'general' ? 'บริษัททั่วไป 20%' : 'SME ขั้นบันได',
+    'ผู้จัดทำ': c.preparer || '',
+    'ผู้ตรวจสอบ': c.reviewer || '',
+    'ผู้อนุมัติ': c.approver || '',
+    'สถานะงาน': (WF_STATUS[(c.workflow || {}).status] || WF_STATUS.draft).label,
+    '_json': JSON.stringify(c)
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'ชื่อบริษัท': '' }]), 'Companies');
+  const erows = (employees || []).map(e => ({ 'ชื่อ': e.name || '', 'ตำแหน่ง': e.role || '', 'บทบาท': e.rtype || '' }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(erows.length ? erows : [{ 'ชื่อ': '' }]), 'Employees');
+  return wb;
+}
 $('btnExport').addEventListener('click', () => {
   saveCompanyFromForm();
-  downloadJSON({ _type: 'pnd51-data', version: 1, exportedAt: new Date().toISOString(),
-                companies: db.companies, employees: db.employees },
-              `pnd51-ข้อมูลทั้งหมด-${stamp()}.json`);
-  toast('ส่งออกข้อมูลทั้งหมดแล้ว');
+  XLSX.writeFile(companiesToWorkbook(db.companies, db.employees), `pnd51-ข้อมูลทั้งหมด-${stamp()}.xlsx`);
+  toast('ส่งออกข้อมูลทั้งหมดเป็นไฟล์ Excel แล้ว');
 });
 function exportCompany() {
   saveCompanyFromForm();
   const c = activeCompany();
-  downloadJSON({ _type: 'pnd51-data', version: 1, exportedAt: new Date().toISOString(),
-                companies: [c], employees: db.employees },
-              `pnd51-${(c.name || 'บริษัท').replace(/[\\/:*?"<>|]/g, '')}-${stamp()}.json`);
-  toast('ส่งออกข้อมูลบริษัทนี้แล้ว — ส่งไฟล์ให้ผู้ตรวจ/อนุมัติเพื่อนำเข้าและ Sign-off');
+  XLSX.writeFile(companiesToWorkbook([c], db.employees),
+    `pnd51-${(c.name || 'บริษัท').replace(/[\\/:*?"<>|]/g, '')}-${stamp()}.xlsx`);
+  toast('ส่งออกบริษัทนี้เป็นไฟล์ Excel แล้ว — ส่งให้ผู้ตรวจ/อนุมัติเพื่อนำเข้าและ Sign-off');
 }
 window.exportCompany = exportCompany;
 $('btnExportOne').addEventListener('click', exportCompany);
 $('btnImport').addEventListener('click', () => $('importData').click());
 $('btnExportEmp').addEventListener('click', () => {
-  downloadJSON({ _type: 'pnd51-employees', version: 1, exportedAt: new Date().toISOString(),
-                employees: db.employees },
-              `pnd51-พนักงาน-${stamp()}.json`);
-  toast('ส่งออกฐานข้อมูลพนักงาน/ผู้รับผิดชอบแล้ว');
+  const wb = XLSX.utils.book_new();
+  const erows = db.employees.map(e => ({ 'ชื่อ': e.name || '', 'ตำแหน่ง': e.role || '', 'บทบาท': e.rtype || '' }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(erows.length ? erows : [{ 'ชื่อ': '' }]), 'Employees');
+  XLSX.writeFile(wb, `pnd51-พนักงาน-${stamp()}.xlsx`);
+  toast('ส่งออกฐานข้อมูลพนักงานเป็นไฟล์ Excel แล้ว');
 });
 $('btnImportEmp').addEventListener('click', () => $('importData').click());
+
+// นำข้อมูลที่อ่านได้ (จาก Excel หรือ JSON เดิม) มารวมกับฐานข้อมูล
+function applyImportedData(data) {
+  const incoming = Array.isArray(data.companies) ? data.companies
+                 : (data.id && data.name !== undefined ? [data] : null);
+  const hasEmp = Array.isArray(data.employees);
+  if ((!incoming || !incoming.length) && (!hasEmp || !data.employees.length)) {
+    throw new Error('ไฟล์ไม่ถูกต้อง — ไม่พบข้อมูลบริษัทหรือพนักงาน');
+  }
+  const mergeEmp = (name, role, rtype) => {
+    if (name && !db.employees.some(x => x.name === name)) {
+      db.employees.push({ name, role: role || '', rtype: rtype || '' });
+      return 1;
+    }
+    return 0;
+  };
+  let empAdded = 0;
+  if (hasEmp) data.employees.forEach(emp => { if (emp) empAdded += mergeEmp(emp.name, emp.role, emp.rtype); });
+  let added = 0, updated = 0;
+  if (incoming) {
+    incoming.forEach(ic => {
+      if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
+      if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
+      if (!Array.isArray(ic.history)) ic.history = [];
+      const idx = db.companies.findIndex(x => x.id === ic.id);
+      if (idx >= 0) { db.companies[idx] = ic; updated++; }
+      else { db.companies.push(ic); added++; }
+      empAdded += mergeEmp(ic.preparer) + mergeEmp(ic.reviewer) + mergeEmp(ic.approver);
+    });
+    if (added && incoming.length) db.activeId = incoming[incoming.length - 1].id;
+  }
+  db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+  saveDB();
+  renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
+  toast(incoming && incoming.length
+    ? `นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`
+    : `นำเข้าพนักงานสำเร็จ: เพิ่ม ${empAdded} คน`);
+}
+// แปลงสมุด Excel (ที่ส่งออกจากโปรแกรม) กลับเป็นข้อมูล
+function workbookToData(wb) {
+  const data = { companies: [], employees: [] };
+  const cs = wb.Sheets['Companies'];
+  if (cs) {
+    XLSX.utils.sheet_to_json(cs, { defval: '' }).forEach(r => {
+      if (r._json) {
+        try { data.companies.push(JSON.parse(r._json)); return; } catch (e) {}
+      }
+      // ไฟล์ที่ไม่มี _json (เช่น พิมพ์เองใน Excel) — สร้างบริษัทจากคอลัมน์ที่อ่านได้
+      if (r['ชื่อบริษัท']) {
+        data.companies.push({
+          name: String(r['ชื่อบริษัท']).trim(), taxId: String(r['เลขผู้เสียภาษี'] || '').trim(),
+          year: parseInt(r['รอบปี พ.ศ.']) || (new Date().getFullYear() + 543),
+          jobCode: String(r['Job Code'] || '').trim(), yearEnd: String(r['วันสิ้นรอบบัญชี'] || '').trim(),
+          entityType: String(r['ประเภท/อัตราภาษี'] || '').includes('20') ? 'general' : 'sme',
+          preparer: String(r['ผู้จัดทำ'] || '').trim(), reviewer: String(r['ผู้ตรวจสอบ'] || '').trim(),
+          approver: String(r['ผู้อนุมัติ'] || '').trim()
+        });
+      }
+    });
+  }
+  const es = wb.Sheets['Employees'];
+  if (es) {
+    XLSX.utils.sheet_to_json(es, { defval: '' }).forEach(r => {
+      const name = String(r['ชื่อ'] || r['name'] || '').trim();
+      if (name) data.employees.push({ name, role: String(r['ตำแหน่ง'] || r['role'] || '').trim(), rtype: String(r['บทบาท'] || '').trim() });
+    });
+  }
+  return data;
+}
 $('importData').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
+  const isJson = /\.json$/i.test(file.name);
   const reader = new FileReader();
   reader.onload = ev => {
     try {
-      const data = JSON.parse(ev.target.result);
-      const incoming = Array.isArray(data.companies) ? data.companies
-                     : (data.id && data.name !== undefined ? [data] : null);
-      const hasEmp = Array.isArray(data.employees);
-      if (!incoming && !hasEmp) throw new Error('ไฟล์ไม่ถูกต้อง — ไม่พบข้อมูลบริษัทหรือพนักงาน');
-      // รวมพนักงาน (ไม่ซ้ำชื่อ)
-      const mergeEmp = (name, role) => {
-        if (name && !db.employees.some(x => x.name === name)) {
-          db.employees.push({ name, role: role || '' });
-          return 1;
-        }
-        return 0;
-      };
-      let empAdded = 0;
-      if (hasEmp) data.employees.forEach(emp => { if (emp) empAdded += mergeEmp(emp.name, emp.role); });
-      let added = 0, updated = 0;
-      if (incoming) {
-        incoming.forEach(ic => {
-          if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
-          // ป้องกันข้อมูลไม่ครบ
-          if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
-          if (!Array.isArray(ic.history)) ic.history = [];
-          const idx = db.companies.findIndex(x => x.id === ic.id);
-          if (idx >= 0) { db.companies[idx] = ic; updated++; }
-          else { db.companies.push(ic); added++; }
-          // ผู้รับผิดชอบที่กำหนดไว้ในบริษัทที่นำเข้า → เพิ่มเข้าฐานพนักงานให้อัตโนมัติ
-          empAdded += mergeEmp(ic.preparer) + mergeEmp(ic.reviewer) + mergeEmp(ic.approver);
-        });
-        if (added && incoming.length) db.activeId = incoming[incoming.length - 1].id;
+      let data;
+      if (isJson) {
+        data = JSON.parse(new TextDecoder('utf-8').decode(ev.target.result));
+      } else {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        data = workbookToData(wb);
       }
-      db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-      saveDB();
-      renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
-      toast(incoming
-        ? `นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`
-        : `นำเข้าพนักงาน/ผู้รับผิดชอบสำเร็จ: เพิ่ม ${empAdded} คน`);
+      applyImportedData(data);
     } catch (err) {
       toast('นำเข้าไม่สำเร็จ: ' + (err.message || err));
     }
     $('importData').value = '';
   };
-  reader.readAsText(file);
+  reader.readAsArrayBuffer(file);
 });
 
 /* ---------- Workflow / Sign-off ---------- */
@@ -1156,21 +1232,30 @@ function renderWorkflow() {
   const stepRole = wf.status === 'draft' ? 'ผู้จัดทำ (Preparer)'
                  : wf.status === 'submitted' ? 'ผู้ตรวจสอบ (Reviewer)'
                  : wf.status === 'reviewed' ? 'ผู้อนุมัติ (Approver)' : '';
+  // ผู้ดำเนินการ: กรองรายชื่อตามหน้าที่ของขั้นนั้น (ร่าง=ผู้จัดทำ · รอตรวจ=ผู้ตรวจสอบ · รออนุมัติ=ผู้อนุมัติ)
+  const actorCap = wf.status === 'draft' ? 'preparer'
+                 : wf.status === 'submitted' ? 'reviewer'
+                 : wf.status === 'reviewed' ? 'approver' : 'preparer';
   const defName = wf.status === 'draft' ? c.preparer
                 : wf.status === 'submitted' ? (wf.assigned.reviewer || c.reviewer)
                 : wf.status === 'reviewed' ? (wf.assigned.approver || c.approver) : '';
-  $('wfActor').innerHTML = wfActorOptions(defName);
+  $('wfActor').innerHTML = empOptionsFor(actorCap, defName, 'เลือกผู้ดำเนินการ');
+  $('wfActor').value = defName || '';
 
-  // ช่อง "ส่งให้ใคร": ขั้นร่างเลือก reviewer ที่จะส่งตรวจ · ขั้นรอตรวจเลือก approver ที่จะส่งอนุมัติ
+  // ช่อง "ส่งให้ใคร": ขั้นร่างเลือกจากรายชื่อผู้ตรวจสอบ · ขั้นรอตรวจเลือกจากรายชื่อผู้อนุมัติ
   const sendField = $('wfSendToField');
   if (wf.status === 'draft') {
     sendField.style.display = '';
     $('wfSendToLabel').textContent = 'ส่งให้ผู้ตรวจสอบ (Reviewer)';
-    $('wfSendTo').innerHTML = wfActorOptions(wf.assigned.reviewer || c.reviewer, 'เลือกผู้ตรวจสอบที่จะส่งให้');
+    const dr = wf.assigned.reviewer || c.reviewer || '';
+    $('wfSendTo').innerHTML = empOptionsFor('reviewer', dr, 'เลือกผู้ตรวจสอบที่จะส่งให้');
+    $('wfSendTo').value = dr;
   } else if (wf.status === 'submitted') {
     sendField.style.display = '';
     $('wfSendToLabel').textContent = 'ส่งให้ผู้อนุมัติ (Approver)';
-    $('wfSendTo').innerHTML = wfActorOptions(wf.assigned.approver || c.approver, 'เลือกผู้อนุมัติที่จะส่งให้');
+    const da = wf.assigned.approver || c.approver || '';
+    $('wfSendTo').innerHTML = empOptionsFor('approver', da, 'เลือกผู้อนุมัติที่จะส่งให้');
+    $('wfSendTo').value = da;
   } else {
     sendField.style.display = 'none';
   }
@@ -1179,11 +1264,11 @@ function renderWorkflow() {
     : '';
 
   // สิทธิ์ตามบทบาทบัญชีที่ล็อกอิน (ถ้าไม่ได้ล็อกอิน = โหมดออฟไลน์ ไม่จำกัด):
-  // staff = ส่งตรวจ · manager = ส่งตรวจ+ตรวจสอบ · partner = อนุมัติ
+  // staff = ส่งตรวจ · manager = ส่งตรวจ+ตรวจสอบ · partner = ทุกหน้าที่ (จัดทำ/ตรวจสอบ/อนุมัติ)
   const gate = act => {
     if (!cloudUser || !cloudApproved || !cloudRole) return true;
-    if (act === 'submit') return cloudRole === 'staff' || cloudRole === 'manager';
-    if (act === 'review') return cloudRole === 'manager';
+    if (act === 'submit') return true;   // ทุกบทบาทเป็นผู้จัดทำได้
+    if (act === 'review') return cloudRole === 'manager' || cloudRole === 'partner';
     if (act === 'approve' || act === 'reopen') return cloudRole === 'partner';
     return true;
   };
@@ -1195,7 +1280,7 @@ function renderWorkflow() {
     if (gate('review')) {
       b += `<button class="btn-approve btn-sm" onclick="wfDo('review-pass')" type="button">✔ ผ่านการตรวจ – ส่งอนุมัติ</button>`;
       b += `<button class="btn-reject btn-sm" onclick="wfDo('review-reject')" type="button">↩ ตีกลับให้แก้ไข</button>`;
-    } else needRole = 'Manager';
+    } else needRole = 'Manager หรือ Partner';
   } else if (wf.status === 'reviewed') {
     if (gate('approve')) {
       b += `<button class="btn-approve btn-sm" onclick="wfDo('approve')" type="button">✅ อนุมัติ</button>`;
@@ -2201,7 +2286,7 @@ let fbAuth = null, fbDb = null;
 let cloudUser = null, cloudReady = false, cloudLoadFailed = false, cloudPushing = false;
 let cloudApproved = false, cloudSignupMode = false, cloudRole = '';
 // บทบาท: staff = ผู้จัดทำ · manager = ผู้จัดทำ/ผู้ตรวจสอบ · partner = ผู้อนุมัติ (และผู้ดูแลระบบ)
-const CLOUD_ROLE_LABELS = { staff: 'Staff (ผู้จัดทำ)', manager: 'Manager (จัดทำ/ตรวจสอบ)', partner: 'Partner (ผู้อนุมัติ)' };
+const CLOUD_ROLE_LABELS = { staff: 'Staff (ผู้จัดทำ)', manager: 'Manager (จัดทำ/ตรวจสอบ)', partner: 'Partner (จัดทำ/ตรวจสอบ/อนุมัติ)' };
 // admin = อีเมลใน CLOUD_ADMIN_EMAILS หรือผู้ใช้ที่ได้รับบทบาท partner (อนุมัติแล้ว)
 function isCloudAdmin() {
   return !!(cloudUser && (CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())
@@ -2288,6 +2373,27 @@ async function checkApproval() {
   }
 }
 
+// ดึงบัญชีผู้ใช้ที่อนุมัติแล้วมาเป็นฐานพนักงาน (แทนการเพิ่มมือ) — ใช้เลือกผู้จัดทำ/ผู้ตรวจ/ผู้อนุมัติ
+async function loadEmployeesFromUsers() {
+  if (!fbDb || !cloudUser || !cloudApproved) return;
+  try {
+    const us = await fbDb.collection('users').where('approved', '==', true).get();
+    const emps = [];
+    us.forEach(d => {
+      const u = d.data();
+      const rtype = u.role || 'staff';
+      emps.push({ name: (u.name || u.email || '').trim(), email: u.email || '', role: CLOUD_ROLE_LABELS[rtype] || rtype, rtype });
+    });
+    if (emps.length) {
+      emps.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      db.employees = emps;
+      safeStore.set(JSON.stringify(db));
+      refreshEmployeesUI();
+      renderWorkflow();
+    }
+  } catch (e) { /* บทบาทเดิมในเครื่องยังใช้ได้ */ }
+}
+
 async function startSync() {
   if (!fbDb || !cloudUser || !cloudApproved) return;
   try {
@@ -2301,13 +2407,8 @@ async function startSync() {
       if (idx >= 0) { if ((rc._syncAt || 0) >= (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; }
       else db.companies.push(rc);
     });
-    const meta = await fbDb.collection('meta').doc('employees').get();
-    if (meta.exists) {
-      (meta.data().list || []).forEach(emp => {
-        if (emp && emp.name && !db.employees.some(x => x.name === emp.name)) db.employees.push({ name: emp.name, role: emp.role || '' });
-      });
-      db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-    }
+    // ฐานพนักงาน = บัญชีผู้ใช้ระบบกลางที่อนุมัติแล้ว (ชื่อ + บทบาท Staff/Manager/Partner)
+    await loadEmployeesFromUsers();
     if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
     safeStore.set(JSON.stringify(db));
     applyingRemote = false;
@@ -2454,7 +2555,7 @@ window.cloudApproveUser = async function (uid) {
     const role = (roleSel && roleSel.value) || 'staff';
     await fbDb.collection('users').doc(uid).update({ approved: true, role, approvedBy: cloudUser.email || '', approvedAt: new Date().toISOString() });
     toast(`อนุมัติเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้กด "ตรวจสอบสถานะอีกครั้ง" ในแอปได้เลย`);
-    loadPendingUsers();
+    loadPendingUsers(); loadAllUsers(); loadEmployeesFromUsers();
   } catch (e) { toast('อนุมัติไม่สำเร็จ: ' + thaiAuthError(e)); }
 };
 window.cloudRejectUser = async function (uid) {
@@ -2501,6 +2602,7 @@ window.cloudChangeRole = async function (uid) {
   try {
     await fbDb.collection('users').doc(uid).update({ role, roleChangedBy: cloudUser.email || '', roleChangedAt: new Date().toISOString() });
     toast(`เปลี่ยนบทบาทเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้คนนั้นต้องรีเฟรชหน้า/ล็อกอินใหม่เพื่อให้สิทธิ์ใหม่มีผล`);
+    loadEmployeesFromUsers();
     if (cloudUser && uid === cloudUser.uid) { cloudRole = role; renderCloudUI(); }
     else loadAllUsers();
   } catch (e) { toast('เปลี่ยนบทบาทไม่สำเร็จ: ' + thaiAuthError(e)); }
