@@ -2186,6 +2186,17 @@ $('btnToggleDetail').addEventListener('click', () => {
 /* ---------- ระบบกลาง (Firebase Cloud Sync) ---------- */
 const CLOUD_CFG_KEY = 'pnd51_cloud_config_v1';
 const CLOUD_ADMIN_EMAILS = ['apichart.expert@gmail.com'];   // partner/ผู้ดูแล — อนุมัติผู้สมัครใหม่ได้
+// ค่าเชื่อมต่อระบบกลางของสำนักงาน (ฝังในแอป — เปิดที่ไหนก็เชื่อมต่ออัตโนมัติ ไม่ต้องวางเอง)
+// หมายเหตุ: firebaseConfig เป็นตัวระบุโปรเจกต์สาธารณะ ไม่ใช่ความลับ — สิทธิ์เข้าถึงข้อมูลคุมด้วย Firestore Rules + การอนุมัติบัญชี
+const CLOUD_DEFAULT_CONFIG = {
+  apiKey: 'AIzaSyB3W7SQsDMTuGYMtWm7RXshNOzINRzc3FI',
+  authDomain: 'bbt-pnd51.firebaseapp.com',
+  projectId: 'bbt-pnd51',
+  storageBucket: 'bbt-pnd51.firebasestorage.app',
+  messagingSenderId: '671227244853',
+  appId: '1:671227244853:web:f5a9e720504a4766185c7c',
+  measurementId: 'G-S8EQ1T3BQC'
+};
 let fbAuth = null, fbDb = null;
 let cloudUser = null, cloudReady = false, cloudLoadFailed = false, cloudPushing = false;
 let cloudApproved = false, cloudSignupMode = false, cloudRole = '';
@@ -2199,8 +2210,11 @@ function isCloudAdmin() {
 let applyingRemote = false, pushTimer = null, unsubCompanies = null;
 
 function getCloudConfig() {
-  try { const raw = localStorage.getItem(CLOUD_CFG_KEY); return raw ? JSON.parse(raw) : null; }
-  catch (e) { return null; }
+  try {
+    const raw = localStorage.getItem(CLOUD_CFG_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return CLOUD_DEFAULT_CONFIG;   // ไม่มีค่าที่วางเอง → ใช้ค่าสำนักงานที่ฝังไว้
 }
 // รับได้ทั้ง JSON ล้วน และโค้ด const firebaseConfig = {...} ที่ก๊อบมาจาก Firebase Console
 function parseConfigText(text) {
@@ -2502,12 +2516,12 @@ $('btnCloudSaveCfg').addEventListener('click', () => {
   }
 });
 $('btnCloudClearCfg').addEventListener('click', () => {
-  if (!confirm('ล้างการตั้งค่าระบบกลางของเครื่องนี้? (ข้อมูลในเครื่องและในระบบกลางไม่ถูกลบ)')) return;
+  if (!confirm('ล้างค่าที่ตั้งเองของเครื่องนี้ แล้วกลับไปใช้ค่าสำนักงานที่ฝังในแอป? (ข้อมูลในเครื่องและในระบบกลางไม่ถูกลบ)')) return;
   localStorage.removeItem(CLOUD_CFG_KEY);
   try { if (fbAuth) fbAuth.signOut(); } catch (e) {}
-  cloudReady = false; cloudUser = null; cloudLoadFailed = false; stopSync();
+  cloudUser = null; cloudLoadFailed = false; stopSync();
   renderCloudUI();
-  toast('ล้างการตั้งค่าแล้ว — กลับสู่โหมดออฟไลน์');
+  toast('ล้างแล้ว — ใช้ค่าสำนักงานตามปกติ (ถ้าเคยวาง config อื่นไว้ ให้รีเฟรชหน้าหนึ่งครั้ง)');
 });
 $('btnCloudLogin').addEventListener('click', async () => {
   const email = $('cloudEmail').value.trim();
