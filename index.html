@@ -1673,13 +1673,15 @@ function calculate() {
   // ---- waterfall ทางภาษี ----
   const taxableBeforeLoss = profit + addBack - exempt;
   const availableLoss = lossAvailable();
-  // ขาดทุนสะสมยกมา (ไม่เกิน 5 รอบบัญชี): ช่อง "ที่นำมาใช้" เว้นว่าง = หักให้อัตโนมัติเต็มจำนวนที่ใช้ได้
-  // กรอกเอง (รวมกรอก 0) = ใช้ตามที่กรอก — ถ้ากรอกตาราง 5 รอบไว้จะจำกัดไม่เกินยอดในตาราง
-  // ยังไม่ได้กรอกตาราง = เชื่อจำนวนที่พิมพ์ · ทุกกรณีไม่เกินกำไรที่เป็นบวก
+  // ขาดทุนสะสมยกมา (ไม่เกิน 5 รอบบัญชี):
+  // · พิมพ์จำนวนเอง = แสดงและหักตามที่พิมพ์เสมอ ไม่ว่าปีนี้กำไรหรือขาดทุน (ผู้ใช้ยืนยัน 2026-07-17)
+  //   — จำกัดแค่ไม่เกินยอดในตาราง 5 รอบ (ถ้ากรอกตารางไว้) · ฐานภาษีติดลบ = ภาษี 0 อยู่แล้ว ไม่มีผลเสีย
+  // · เว้นว่าง = หักให้อัตโนมัติเท่าที่เกิดประโยชน์ (ไม่เกินกำไรที่เป็นบวก — ไม่เผาสิทธิ์ทิ้งในปีขาดทุน)
   const lossFieldBlank = $('inLossUsed').value.trim() === '';
-  const lossUsedInput = lossFieldBlank ? availableLoss : parseNum($('inLossUsed').value);
   const lossTableCap = (lossFieldBlank || availableLoss > 0) ? availableLoss : Infinity;
-  const lossUsed = Math.max(0, Math.min(lossUsedInput, lossTableCap, Math.max(taxableBeforeLoss, 0)));
+  const lossUsed = lossFieldBlank
+    ? Math.max(0, Math.min(availableLoss, Math.max(taxableBeforeLoss, 0)))
+    : Math.max(0, Math.min(parseNum($('inLossUsed').value), lossTableCap));
   const lossAuto = lossFieldBlank && lossUsed > 0;
   const taxableProfit = taxableBeforeLoss - lossUsed;
 
@@ -1860,8 +1862,8 @@ function renderLossTable() {
 function updateLossHint() {
   const avail = lossAvailable();
   $('lossUsedHint').textContent = avail > 0
-    ? `มียอดใช้ได้ ${fmt(avail)} บาท — เว้นว่างไว้ ระบบจะหักให้อัตโนมัติ (ไม่เกินกำไรที่เป็นบวก) · อยากใช้บางส่วนให้พิมพ์จำนวนเอง · ไม่ใช้ให้พิมพ์ 0`
-    : 'กรอกตารางด้านบนแล้วระบบหักให้อัตโนมัติ — หรือพิมพ์จำนวนที่ใช้ในช่องนี้เองก็ได้ (จำกัดไม่เกินกำไรที่เป็นบวก)';
+    ? `มียอดใช้ได้ ${fmt(avail)} บาท — เว้นว่างไว้ ระบบจะหักให้อัตโนมัติเมื่อมีกำไร · พิมพ์จำนวนเอง = หักตามนั้นเสมอ (แม้ปีขาดทุน) · ไม่ใช้ให้พิมพ์ 0`
+    : 'กรอกตารางด้านบนแล้วระบบหักให้อัตโนมัติเมื่อมีกำไร — หรือพิมพ์จำนวนที่ใช้เองในช่องนี้ (หักตามที่พิมพ์เสมอ แม้ปีขาดทุน)';
 }
 
 /* ---------- สรุปแบบ ภ.ง.ด.51 (front page) ---------- */
@@ -2623,11 +2625,9 @@ function computePriorYearTax() {
   const py = ensurePriorYearTax(c);
   const accProfit = parsedA ? parsedA.netProfit : null;
   const taxableBeforeLoss = (accProfit || 0) + py.addBack - py.exempt;
-  // ปีก่อนเป็นตัวเลขจริงจาก ภ.ง.ด.50 ที่ยื่นแล้ว — จำกัด "ไม่เกินกำไรบวก" เฉพาะเมื่อรู้กำไรจริง (นำเข้างบ A แล้ว)
-  // ยังไม่มีงบ A ให้เชื่อยอดตามที่กรอก (เดิมกำไรถูกนับเป็น 0 ทำให้ยอดที่กรอกโดนตัดเหลือ 0 ไม่แสดงในตาราง)
-  const lossUsed = accProfit === null
-    ? Math.max(0, py.lossUsed)
-    : Math.max(0, Math.min(py.lossUsed, Math.max(taxableBeforeLoss, 0)));
+  // ปีก่อนเป็นตัวเลขจริงจาก ภ.ง.ด.50 ที่ยื่นแล้ว — แสดงและหักตามที่กรอกเสมอ ไม่ว่าปีนั้นกำไรหรือขาดทุน
+  // (ผู้ใช้ยืนยัน 2026-07-17: ห้ามตัดยอดทิ้ง — ปีขาดทุนฐานภาษีติดลบอยู่แล้ว ภาษีเป็น 0 ไม่มีผลเสีย)
+  const lossUsed = Math.max(0, py.lossUsed);
   const taxable = taxableBeforeLoss - lossUsed;
   // ภาษีปีก่อนเป็นภาษีทั้งปี (ไม่หารครึ่ง) — ใช้เมื่อไม่ได้กรอก CIT เอง และมีงบ A ให้คำนวณ
   const citComputed = (accProfit !== null) ? estimateTaxOn(Math.max(taxable, 0), c.entityType) : 0;
@@ -2652,13 +2652,14 @@ function computeCurrentPreview() {
   const exempt = parseNum($('inExempt').value);
   const wht = parseNum($('inWht').value);
   const taxableBeforeLoss = profit + addBack - exempt;
-  // กติกาเดียวกับปุ่มคำนวณ (ขั้น 3): ว่าง = หักอัตโนมัติจากตาราง 5 รอบ · พิมพ์เอง = ตามนั้น
-  // (ถ้ายังไม่ได้กรอกตาราง ให้เชื่อจำนวนที่พิมพ์ — เดิมโดนเพดานตาราง 0 ตัดทิ้งจนไม่ถูกใช้เลย) · ทุกกรณีไม่เกินกำไรที่เป็นบวก
+  // กติกาเดียวกับปุ่มคำนวณ (ขั้น 3): พิมพ์เอง = แสดงและหักเสมอ ไม่ว่ากำไรหรือขาดทุน (จำกัดแค่ยอดตารางถ้ากรอกไว้)
+  // เว้นว่าง = หักอัตโนมัติเท่าที่เกิดประโยชน์ (ไม่เกินกำไรที่เป็นบวก)
   const availLoss = lossAvailable();
   const lossBlank = $('inLossUsed').value.trim() === '';
-  const lossInput = lossBlank ? availLoss : parseNum($('inLossUsed').value);
   const lossCap = (lossBlank || availLoss > 0) ? availLoss : Infinity;
-  const lossUsed = Math.max(0, Math.min(lossInput, lossCap, Math.max(taxableBeforeLoss, 0)));
+  const lossUsed = lossBlank
+    ? Math.max(0, Math.min(availLoss, Math.max(taxableBeforeLoss, 0)))
+    : Math.max(0, Math.min(parseNum($('inLossUsed').value), lossCap));
   const taxable = taxableBeforeLoss - lossUsed;
   const half = Math.max(taxable, 0) / 2;
   const tax = estimateTaxOn(half, c.entityType);
@@ -2901,7 +2902,8 @@ async function startSync() {
       const rc = d.data();
       if (!rc || !rc.id) return;
       const idx = db.companies.findIndex(x => x.id === rc.id);
-      if (idx >= 0) { if ((rc._syncAt || 0) >= (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; else return; }
+      // เสมอกันให้ "เครื่องนี้ชนะ" — ของในเครื่องคือสิ่งที่ผู้ใช้เห็น/เพิ่งทำอยู่ ถ้าแพ้ tie ข้อมูลที่กรอกจะหายทั้งที่ไม่มีใครแก้ทับจริง
+      if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; else return; }
       else db.companies.push(rc);
       // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
       companyStamp[rc.id] = companyProbe(rc);
