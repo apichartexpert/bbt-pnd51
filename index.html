@@ -392,8 +392,15 @@
     <p>ภาษีเงินได้นิติบุคคลครึ่งรอบระยะเวลาบัญชี (ประมาณการกำไรสุทธิ) — เครื่องมือช่วยคำนวณเบื้องต้น</p>
   </header>
 
+  <!-- ===== แถบสลับหน้า: Dashboard ⇄ หน้าทำงาน ===== -->
+  <div class="card screen-only" id="topNav" style="padding:10px 16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+    <button class="btn-primary btn-sm" id="btnViewDash" type="button">📊 Dashboard</button>
+    <button class="btn-outline btn-sm" id="btnViewWork" type="button">📝 หน้าทำงาน (7 ขั้นตอน)</button>
+    <span class="hint" id="topNavCompany"></span>
+  </div>
+
   <!-- ===== ระบบกลาง (Cloud Sync) ===== -->
-  <div class="card screen-only">
+  <div class="card screen-only" id="cloudCard">
     <h2><span class="step">☁</span> ระบบกลาง — ใช้ข้อมูลร่วมกันหลายเครื่อง</h2>
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px">
       <span style="font-weight:600; color:var(--gray)">สถานะ:</span>
@@ -454,8 +461,15 @@
     <p class="note">เมื่อเชื่อมต่อแล้ว ข้อมูลบริษัท/พนักงาน/สถานะ Sign-off จะบันทึกขึ้นระบบกลางอัตโนมัติ และอัปเดตถึงกันทุกเครื่องที่ล็อกอิน · เมื่อไม่ล็อกอิน แอปยังใช้แบบออฟไลน์ได้ตามปกติ (ข้อมูลอยู่ในเครื่อง)</p>
   </div>
 
-  <!-- ===== รายการงาน (แสดงเมื่อล็อกอินระบบกลางแล้ว) ===== -->
-  <div class="card screen-only" id="jobsCard" style="display:none">
+  <!-- ===== Dashboard สรุปภาพรวม ===== -->
+  <div class="card screen-only" id="dashSummary">
+    <h2><span class="step">📊</span> ภาพรวมงาน ภ.ง.ด.51</h2>
+    <div id="dashTiles" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px"></div>
+    <div id="dashAlerts"></div>
+  </div>
+
+  <!-- ===== รายการงาน — สถานะทุกบริษัท ===== -->
+  <div class="card screen-only" id="jobsCard">
     <h2><span class="step">📋</span> รายการงาน — สถานะทุกบริษัท</h2>
     <div id="jobsList"></div>
   </div>
@@ -947,6 +961,10 @@ function loadCompanyToForm() {
   renderPriorYearTax();
   setResultVisible(false);
   refreshAttachments();   // โหลดเอกสารแนบของบริษัทนี้
+  // คำนวณกลับมาให้อัตโนมัติถ้ามีตัวเลขประมาณการอยู่แล้ว — วงกลมขั้น 4 เขียวต่อเนื่องหลังเปิดใหม่
+  // และกันผลคำนวณของบริษัทก่อนหน้าค้างอยู่ตอนสลับบริษัท
+  if ($('inProfit').value.trim() !== '') calculate();
+  else lastResult = null;
 }
 function saveCompanyFromForm() {
   const c = activeCompany();
@@ -1785,7 +1803,7 @@ function renderResult() {
   renderPndSummary(r);
 
   setResultVisible(true);
-  goToStep(4);
+  // ไม่นำทางไปขั้น 4 ที่นี่ — ให้ปุ่ม "คำนวณภาษี" เป็นคนพาไป (การคำนวณอัตโนมัติตอนเปิดแอปจะได้ไม่ลากหน้าไปเอง)
 }
 
 function estimateTaxOn(base, type) {
@@ -1889,7 +1907,7 @@ function renderPndSummary(r) {
   $('pndSummary').innerHTML = pndSummaryHtml(r);
 }
 
-$('btnCalc').addEventListener('click', calculate);
+$('btnCalc').addEventListener('click', () => { calculate(); if (lastResult) goToStep(4); });
 $('btnClear').addEventListener('click', () => {
   ['inRevenue', 'inExpense', 'inProfit', 'inAddBack', 'inExempt', 'inLastYearProfit', 'inWht', 'inLossUsed']
     .forEach(id => $(id).value = '');
@@ -1982,6 +2000,7 @@ window.loadHistory = function (i) {
   const radio = document.querySelector(`input[name="entityType"][value="${et}"]`);
   if (radio) { radio.checked = true; syncRadioStyle(); saveCompanyFromForm(); }
   calculate();
+  goToStep(3);   // พาไปหน้ากรอกประมาณการ (ช่องที่เพิ่งเติมตัวเลข) — เดิมค้างที่หน้าประวัติ
   toast('เรียกรายการมาแก้ไขแล้ว — ปรับตัวเลขแล้วกด "คำนวณภาษี" อีกครั้งเพื่ออัปเดต');
   document.querySelector('#inProfit').scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
@@ -3177,8 +3196,7 @@ const JOB_GROUPS = [
 function renderJobsDashboard() {
   const card = $('jobsCard');
   if (!card) return;
-  if (!cloudUser || !cloudApproved) { card.style.display = 'none'; return; }
-  card.style.display = '';
+  renderDashSummary();   // การ์ดภาพรวมอัปเดตพร้อมกันเสมอ
   const groups = {};
   db.companies.forEach(c => {
     const k = jobStatusOf(c);
@@ -3203,7 +3221,49 @@ function renderJobsDashboard() {
         + `</div>`;
     });
   });
-  $('jobsList').innerHTML = h || '<div class="wf-empty">ยังไม่มีงาน — เริ่มเพิ่มบริษัทที่ขั้นตอนที่ 1 ด้านล่าง</div>';
+  $('jobsList').innerHTML = h || '<div class="wf-empty">📋 ยังไม่มีงาน — กด "หน้าทำงาน" ด้านบน แล้วเพิ่มบริษัทที่ขั้นตอนที่ 1</div>';
+}
+
+// การ์ดภาพรวม: นับงานตามสถานะ + รายการเตือนใกล้/เลยกำหนดยื่น
+function renderDashSummary() {
+  const tilesEl = $('dashTiles');
+  if (!tilesEl) return;
+  const counts = {};
+  db.companies.forEach(c => { const k = jobStatusOf(c); counts[k] = (counts[k] || 0) + 1; });
+  const total = db.companies.length;
+  const tile = (n, label, color) => `<div style="flex:1; min-width:104px; background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:10px 12px; text-align:center">
+    <div style="font-size:1.5rem; font-weight:800; color:${color || 'var(--ink, #1c1c1e)'}">${n}</div>
+    <div class="hint" style="line-height:1.25">${label}</div></div>`;
+  tilesEl.innerHTML =
+    tile(total, 'งานทั้งหมด')
+    + tile((counts.notstarted || 0) + (counts.inprogress || 0), 'กำลังจัดทำ')
+    + tile(counts.returned || 0, 'ถูกตีกลับ', counts.returned ? '#ff3b30' : undefined)
+    + tile((counts.submitted || 0) + (counts.checked || 0), 'รอตรวจสอบ')
+    + tile(counts.reviewed || 0, 'รออนุมัติ')
+    + tile(counts.approved || 0, 'รอยื่นแบบ', counts.approved ? '#ff9f0a' : undefined)
+    + tile(counts.filed || 0, 'รอชำระเงิน', counts.filed ? '#ff9f0a' : undefined)
+    + tile(counts.done || 0, 'เสร็จสมบูรณ์', counts.done ? '#557f25' : undefined);
+  // รายการเตือน: เลยกำหนด (แดง) มาก่อน แล้วค่อยใกล้ครบกำหนด ≤ 14 วัน (เหลือง)
+  const alerts = [];
+  db.companies.forEach(c => {
+    const wf = ensureWorkflow(c);
+    if (wf.status === 'completed') return;
+    const di = deadlineInfo(c);
+    if (!di || di.days > 14) return;
+    alerts.push({ c, di, wf });
+  });
+  alerts.sort((a, b) => a.di.days - b.di.days);
+  $('dashAlerts').innerHTML = !alerts.length
+    ? '<p class="note" style="margin:4px 0 0">✓ ไม่มีงานใกล้ครบกำหนดยื่นใน 14 วัน</p>'
+    : '<div class="assign-head" style="margin:8px 0 4px">⏰ ใกล้ครบกำหนด / เลยกำหนดยื่น</div>'
+      + alerts.map(a => {
+        const over = a.di.days < 0;
+        return `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0 6px 4px; border-bottom:1px solid var(--border)">
+          <span style="flex:1; min-width:160px">${escapeHtml(a.c.name || '(ยังไม่ตั้งชื่อบริษัท)')} <span class="hint">${(WF_STATUS[a.wf.status] || WF_STATUS.draft).label}</span></span>
+          <span class="wf-badge ${over ? 'wf-returned' : 'wf-submitted'}" style="font-size:.75rem; padding:2px 10px">${over ? '⚠ เลยกำหนด ' + (-a.di.days) + ' วัน' : '⏰ เหลือ ' + a.di.days + ' วัน'} (${a.di.label})</span>
+          <button class="btn-outline btn-sm" onclick="openJob('${a.c.id}')" type="button">เปิดงาน →</button>
+        </div>`;
+      }).join('');
 }
 window.openJob = function (id) {
   if (!db.companies.some(c => c.id === id)) return;
@@ -3226,6 +3286,7 @@ const WIZARD_STEP_LABELS = {
 };
 const WIZARD_LAST = 7;
 let currentStep = 1;
+let currentView = 'dash';   // 'dash' = หน้าสรุป (ระบบกลาง+ภาพรวม+รายการงาน) · 'work' = หน้าทำงาน 7 ขั้นตอน
 
 function setResultVisible(has) {
   $('resultEmpty').style.display = has ? 'none' : 'block';
@@ -3269,22 +3330,46 @@ function renderProgressBar() {
 }
 
 function renderWizard() {
+  const work = currentView === 'work';
+  // ปุ่มแถบบน: หน้าที่เปิดอยู่เป็นปุ่มเขียว
+  $('btnViewDash').className = work ? 'btn-outline btn-sm' : 'btn-primary btn-sm';
+  $('btnViewWork').className = work ? 'btn-primary btn-sm' : 'btn-outline btn-sm';
+  const c = activeCompany();
+  $('topNavCompany').textContent = work && c ? `— กำลังทำ: ${c.name || '(ยังไม่ตั้งชื่อบริษัท)'} รอบปี ${c.year || '-'}` : '';
+  // หน้า Dashboard: ระบบกลาง + ภาพรวม + รายการงาน · หน้าทำงาน: แถบขั้นตอน + การ์ดขั้นตอน + ปุ่มย้อน/ถัดไป
+  $('cloudCard').style.display = work ? 'none' : '';
+  $('dashSummary').style.display = work ? 'none' : '';
+  $('jobsCard').style.display = work ? 'none' : '';
+  $('wizardProgress').style.display = work ? '' : 'none';
+  document.querySelector('.wizard-nav').style.display = work ? '' : 'none';
   WIZARD_STEPS.forEach(n => {
     const el = stepCardEl(n);
-    if (el) el.style.display = (n === currentStep) ? '' : 'none';
+    if (el) el.style.display = (work && n === currentStep) ? '' : 'none';
   });
-  renderProgressBar();
-  $('btnWzBack').style.visibility = currentStep === 1 ? 'hidden' : 'visible';
-  $('btnWzNext').style.visibility = currentStep === WIZARD_LAST ? 'hidden' : 'visible';
+  if (work) {
+    renderProgressBar();
+    $('btnWzBack').style.visibility = currentStep === 1 ? 'hidden' : 'visible';
+    $('btnWzNext').style.visibility = currentStep === WIZARD_LAST ? 'hidden' : 'visible';
+  } else {
+    renderJobsDashboard();
+  }
 }
 
 window.goToStep = function (n) {
   if (n < 1 || n > WIZARD_LAST) return;
   currentStep = n;
+  currentView = 'work';   // เปิดขั้นตอน = เข้าโหมดหน้าทำงานเสมอ (เช่นกด "เปิดงาน" จาก Dashboard)
+  renderWizard();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+window.setView = function (v) {
+  currentView = v;
   renderWizard();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
+$('btnViewDash').addEventListener('click', () => setView('dash'));
+$('btnViewWork').addEventListener('click', () => setView('work'));
 $('btnWzBack').addEventListener('click', () => goToStep(currentStep - 1));
 $('btnWzNext').addEventListener('click', () => goToStep(currentStep + 1));
 document.addEventListener('input', e => { if (e.target.closest('.wizard-page')) renderProgressBar(); });
