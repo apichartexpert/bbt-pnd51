@@ -1027,11 +1027,15 @@ function syncCYFields() {
 $('inCYWht').addEventListener('change', () => {
   $('inWht').value = $('inCYWht').value.trim() === '' ? '' : fmt(parseNum($('inCYWht').value));
   $('inCYWht').value = $('inWht').value;
+  saveCompanyFromForm();   // เก็บถาวร + คำนวณผลขั้น 4 ใหม่ให้ตรงกันทันที
+  if ($('inProfit').value.trim() !== '') calculate();
   renderPriorYearTax();
 });
 $('inCYLossUsed').addEventListener('change', () => {
   $('inLossUsed').value = $('inCYLossUsed').value.trim() === '' ? '' : fmt(parseNum($('inCYLossUsed').value));
   $('inCYLossUsed').value = $('inLossUsed').value;
+  saveCompanyFromForm();   // เก็บถาวร + คำนวณผลขั้น 4 ใหม่ให้ตรงกันทันที
+  if ($('inProfit').value.trim() !== '') calculate();
   renderPriorYearTax();
 });
 ['inWht', 'inLossUsed', 'inProfit', 'inAddBack', 'inExempt', 'inRevenue', 'inExpense', 'inLastYearProfit']
@@ -1670,10 +1674,12 @@ function calculate() {
   const taxableBeforeLoss = profit + addBack - exempt;
   const availableLoss = lossAvailable();
   // ขาดทุนสะสมยกมา (ไม่เกิน 5 รอบบัญชี): ช่อง "ที่นำมาใช้" เว้นว่าง = หักให้อัตโนมัติเต็มจำนวนที่ใช้ได้
-  // กรอกเอง (รวมกรอก 0) = ใช้ตามที่กรอก · ทุกกรณีไม่เกิน (ก) ยอดที่มี (ข) กำไรที่เป็นบวก
+  // กรอกเอง (รวมกรอก 0) = ใช้ตามที่กรอก — ถ้ากรอกตาราง 5 รอบไว้จะจำกัดไม่เกินยอดในตาราง
+  // ยังไม่ได้กรอกตาราง = เชื่อจำนวนที่พิมพ์ · ทุกกรณีไม่เกินกำไรที่เป็นบวก
   const lossFieldBlank = $('inLossUsed').value.trim() === '';
   const lossUsedInput = lossFieldBlank ? availableLoss : parseNum($('inLossUsed').value);
-  const lossUsed = Math.max(0, Math.min(lossUsedInput, availableLoss, Math.max(taxableBeforeLoss, 0)));
+  const lossTableCap = (lossFieldBlank || availableLoss > 0) ? availableLoss : Infinity;
+  const lossUsed = Math.max(0, Math.min(lossUsedInput, lossTableCap, Math.max(taxableBeforeLoss, 0)));
   const lossAuto = lossFieldBlank && lossUsed > 0;
   const taxableProfit = taxableBeforeLoss - lossUsed;
 
@@ -1855,7 +1861,7 @@ function updateLossHint() {
   const avail = lossAvailable();
   $('lossUsedHint').textContent = avail > 0
     ? `มียอดใช้ได้ ${fmt(avail)} บาท — เว้นว่างไว้ ระบบจะหักให้อัตโนมัติ (ไม่เกินกำไรที่เป็นบวก) · อยากใช้บางส่วนให้พิมพ์จำนวนเอง · ไม่ใช้ให้พิมพ์ 0`
-    : 'ยังไม่มีขาดทุนสะสมยกมา — กรอกในตารางด้านบนก่อน แล้วระบบจะหักให้อัตโนมัติตอนคำนวณ';
+    : 'กรอกตารางด้านบนแล้วระบบหักให้อัตโนมัติ — หรือพิมพ์จำนวนที่ใช้ในช่องนี้เองก็ได้ (จำกัดไม่เกินกำไรที่เป็นบวก)';
 }
 
 /* ---------- สรุปแบบ ภ.ง.ด.51 (front page) ---------- */
@@ -2617,7 +2623,11 @@ function computePriorYearTax() {
   const py = ensurePriorYearTax(c);
   const accProfit = parsedA ? parsedA.netProfit : null;
   const taxableBeforeLoss = (accProfit || 0) + py.addBack - py.exempt;
-  const lossUsed = Math.max(0, Math.min(py.lossUsed, Math.max(taxableBeforeLoss, 0)));
+  // ปีก่อนเป็นตัวเลขจริงจาก ภ.ง.ด.50 ที่ยื่นแล้ว — จำกัด "ไม่เกินกำไรบวก" เฉพาะเมื่อรู้กำไรจริง (นำเข้างบ A แล้ว)
+  // ยังไม่มีงบ A ให้เชื่อยอดตามที่กรอก (เดิมกำไรถูกนับเป็น 0 ทำให้ยอดที่กรอกโดนตัดเหลือ 0 ไม่แสดงในตาราง)
+  const lossUsed = accProfit === null
+    ? Math.max(0, py.lossUsed)
+    : Math.max(0, Math.min(py.lossUsed, Math.max(taxableBeforeLoss, 0)));
   const taxable = taxableBeforeLoss - lossUsed;
   // ภาษีปีก่อนเป็นภาษีทั้งปี (ไม่หารครึ่ง) — ใช้เมื่อไม่ได้กรอก CIT เอง และมีงบ A ให้คำนวณ
   const citComputed = (accProfit !== null) ? estimateTaxOn(Math.max(taxable, 0), c.entityType) : 0;
@@ -2642,7 +2652,13 @@ function computeCurrentPreview() {
   const exempt = parseNum($('inExempt').value);
   const wht = parseNum($('inWht').value);
   const taxableBeforeLoss = profit + addBack - exempt;
-  const lossUsed = Math.max(0, Math.min(parseNum($('inLossUsed').value), lossAvailable(), Math.max(taxableBeforeLoss, 0)));
+  // กติกาเดียวกับปุ่มคำนวณ (ขั้น 3): ว่าง = หักอัตโนมัติจากตาราง 5 รอบ · พิมพ์เอง = ตามนั้น
+  // (ถ้ายังไม่ได้กรอกตาราง ให้เชื่อจำนวนที่พิมพ์ — เดิมโดนเพดานตาราง 0 ตัดทิ้งจนไม่ถูกใช้เลย) · ทุกกรณีไม่เกินกำไรที่เป็นบวก
+  const availLoss = lossAvailable();
+  const lossBlank = $('inLossUsed').value.trim() === '';
+  const lossInput = lossBlank ? availLoss : parseNum($('inLossUsed').value);
+  const lossCap = (lossBlank || availLoss > 0) ? availLoss : Infinity;
+  const lossUsed = Math.max(0, Math.min(lossInput, lossCap, Math.max(taxableBeforeLoss, 0)));
   const taxable = taxableBeforeLoss - lossUsed;
   const half = Math.max(taxable, 0) / 2;
   const tax = estimateTaxOn(half, c.entityType);
