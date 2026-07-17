@@ -270,16 +270,16 @@
   .sign-date { color: var(--gray); font-size: .78rem; }
 
   /* print preview overlay */
-  #printOverlay { position: fixed; inset: 0; z-index: 9999; background: rgba(20,26,34,.72);
+  #printOverlay, #attOverlay { position: fixed; inset: 0; z-index: 9999; background: rgba(20,26,34,.72);
     display: flex; flex-direction: column; padding: 12px; gap: 10px; }
-  #printOverlay .po-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  #printOverlay .po-bar, #attOverlay .po-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     background: #fff; border-radius: 10px; padding: 10px 14px; }
-  #printOverlay .po-title { font-weight: 700; color: var(--blue-dark); }
-  #printOverlay .po-spacer { flex: 1; }
+  #printOverlay .po-title, #attOverlay .po-title { font-weight: 700; color: var(--blue-dark); }
+  #printOverlay .po-spacer, #attOverlay .po-spacer { flex: 1; }
   #printOverlay .po-hint { background: var(--amber-light); color: #6e4a12; border-radius: 8px;
     padding: 8px 14px; font-size: .82rem; }
-  #printOverlay .po-paper { flex: 1; background: #fff; border-radius: 10px; overflow: auto; padding: 10px; }
-  #printOverlay iframe { width: 100%; height: 100%; min-height: 60vh; border: 1px solid var(--border); background: #fff; }
+  #printOverlay .po-paper, #attOverlay .po-paper { flex: 1; background: #fff; border-radius: 10px; overflow: auto; padding: 10px; }
+  #printOverlay iframe, #attOverlay iframe { width: 100%; height: 100%; min-height: 60vh; border: 1px solid var(--border); background: #fff; }
 
   /* PND.51 summary front page */
   .pnd-summary { border: 1.5px solid var(--blue); border-radius: 10px; padding: 18px 20px; margin-top: 18px; background: #fff; }
@@ -594,6 +594,10 @@
       <p class="note">การจัดกลุ่มใช้เลขผังบัญชี: ขึ้นต้น 4 = รายได้ · 51 = ต้นทุนขาย · 58 = ดอกเบี้ยจ่าย · 59 = ภาษีเงินได้ (ไม่รวมในกำไรก่อนภาษี) · 5x อื่น ๆ = ค่าใช้จ่าย SGA · บัญชีหมวด 1–3 (งบแสดงฐานะการเงิน) ไม่นำมาคำนวณ กำไร/ขาดทุน</p>
     </div>
 
+    <div class="sub-head">เอกสารแนบ (Attachment) <span class="hint" style="font-weight:400">— เก็บในเครื่องนี้ ไม่ซิงค์ขึ้นระบบกลาง · กด "ดู" เพื่อเปิดตัวอย่าง</span></div>
+    <div id="attachWrap"></div>
+    <input type="file" id="attachInput" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp" style="display:none">
+
     <div class="sub-head">ข้อมูลภาษีปีก่อน (จาก ภ.ง.ด.50) — สำหรับเปรียบเทียบ</div>
     <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
       <div class="field">
@@ -889,6 +893,7 @@ function loadCompanyToForm() {
   renderWorkflow();
   renderPriorYearTax();
   setResultVisible(false);
+  refreshAttachments();   // โหลดเอกสารแนบของบริษัทนี้
 }
 function saveCompanyFromForm() {
   const c = activeCompany();
@@ -924,6 +929,7 @@ $('btnNewCompany').addEventListener('click', () => {
 $('btnDeleteCompany').addEventListener('click', () => {
   const c = activeCompany();
   if (!confirm(`ลบบริษัท "${c.name || '(ยังไม่ตั้งชื่อ)'}" และประวัติทั้งหมดของบริษัทนี้?`)) return;
+  attDeleteByCompany(c.id);   // ลบไฟล์แนบของบริษัทนี้ในเครื่องด้วย
   db.companies = db.companies.filter(x => x.id !== c.id);
   if (db.companies.length === 0) db.companies.push(newCompany());
   db.activeId = db.companies[0].id;
@@ -1186,6 +1192,155 @@ $('importData').addEventListener('change', e => {
   };
   reader.readAsArrayBuffer(file);
 });
+
+/* ---------- เอกสารแนบ (เก็บในเครื่องด้วย IndexedDB — ไม่ซิงค์ขึ้นระบบกลาง) ---------- */
+const ATT_KINDS = [
+  { key: 'tb',    label: 'งบทดลอง (Trial Balance)', hint: 'บันทึกให้อัตโนมัติเมื่อนำเข้างบทดลองด้านบน — แนบเพิ่มเองก็ได้' },
+  { key: 'fs',    label: 'งบการเงินปีก่อน', hint: '' },
+  { key: 'pnd50', label: 'ภ.ง.ด.50 ปีก่อน', hint: '' },
+  { key: 'wht',   label: 'รายละเอียดภาษีเงินได้ถูกหัก ณ ที่จ่าย', hint: '' }
+];
+let attDB = null, attCache = [], attPendingKind = '';
+function attOpen() {
+  return new Promise((res, rej) => {
+    if (attDB) return res(attDB);
+    const rq = indexedDB.open('pnd51_files', 1);
+    rq.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('files')) {
+        d.createObjectStore('files', { keyPath: 'id' }).createIndex('co', 'companyId');
+      }
+    };
+    rq.onsuccess = () => { attDB = rq.result; res(attDB); };
+    rq.onerror = () => rej(rq.error || new Error('เปิดที่เก็บไฟล์ในเครื่องไม่ได้'));
+  });
+}
+function attTx(fn) {
+  return attOpen().then(d => new Promise((res, rej) => {
+    const tx = d.transaction('files', 'readwrite');
+    fn(tx.objectStore('files'));
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  }));
+}
+async function attListFor(companyId) {
+  const d = await attOpen();
+  return new Promise((res, rej) => {
+    const rq = d.transaction('files', 'readonly').objectStore('files').index('co').getAll(companyId);
+    rq.onsuccess = () => res(rq.result || []);
+    rq.onerror = () => rej(rq.error);
+  });
+}
+async function attSave(file, kind, note) {
+  if (file.size > 15 * 1024 * 1024) { toast('ไฟล์ใหญ่เกิน 15MB — แนบไม่ได้'); return null; }
+  const rec = {
+    id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6),
+    companyId: activeCompany().id, kind, note: note || '',
+    name: file.name, type: file.type || '', size: file.size,
+    addedAt: new Date().toISOString(), blob: file
+  };
+  await attTx(st => st.put(rec));
+  return rec;
+}
+async function refreshAttachments() {
+  try { attCache = await attListFor(activeCompany().id); }
+  catch (e) { attCache = []; }
+  renderAttachments();
+  renderProgressBar();
+}
+function fmtSize(n) {
+  if (n > 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n > 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+function renderAttachments() {
+  const wrap = $('attachWrap');
+  if (!wrap) return;
+  wrap.innerHTML = ATT_KINDS.map(k => {
+    const files = attCache.filter(a => a.kind === k.key)
+      .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+    const rows = files.map(a =>
+      `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:4px 0 4px 12px; border-top:1px dashed var(--border)">`
+      + `<span style="flex:1; min-width:160px">📄 ${escapeHtml(a.name)}${a.note ? ' <span class="hint">[' + escapeHtml(a.note) + ']</span>' : ''} <span class="hint">· ${fmtSize(a.size)}</span></span>`
+      + `<button class="btn-outline btn-sm" onclick="attPreview('${a.id}')" type="button">👁 ดู</button>`
+      + `<button class="btn-danger-outline" onclick="attDelete('${a.id}')" type="button">ลบ</button>`
+      + `</div>`).join('');
+    return `<div style="border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:8px">`
+      + `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">`
+      + `<b style="flex:1; min-width:180px; font-size:.9rem">${k.label} <span class="hint" style="font-weight:400">(${files.length} ไฟล์)</span></b>`
+      + `<button class="btn-outline btn-sm" onclick="attPick('${k.key}')" type="button">📎 แนบไฟล์</button>`
+      + `</div>`
+      + (k.hint ? `<div class="hint" style="margin-top:2px">${k.hint}</div>` : '')
+      + rows
+      + `</div>`;
+  }).join('');
+}
+window.attPick = function (kind) { attPendingKind = kind; $('attachInput').click(); };
+$('attachInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file || !attPendingKind) { e.target.value = ''; return; }
+  try {
+    const rec = await attSave(file, attPendingKind);
+    if (rec) { toast('แนบไฟล์แล้ว: ' + file.name); await refreshAttachments(); }
+  } catch (err) { toast('แนบไฟล์ไม่สำเร็จ: ' + (err.message || err)); }
+  e.target.value = ''; attPendingKind = '';
+});
+window.attDelete = async function (id) {
+  const a = attCache.find(x => x.id === id);
+  if (!a) return;
+  if (!confirm(`ลบไฟล์แนบ "${a.name}"?`)) return;
+  await attTx(st => st.delete(id));
+  toast('ลบไฟล์แนบแล้ว');
+  refreshAttachments();
+};
+async function attDeleteByCompany(companyId) {
+  try {
+    const list = await attListFor(companyId);
+    if (list.length) await attTx(st => { list.forEach(a => st.delete(a.id)); });
+  } catch (e) {}
+}
+// งบทดลองที่นำเข้า → เก็บเข้าเอกสารแนบอัตโนมัติ (งวดเดียวกันแทนที่ของเดิม)
+async function attSaveTb(file, slot) {
+  try {
+    const note = 'งวด ' + slot;
+    const olds = attCache.filter(a => a.kind === 'tb' && a.note === note);
+    if (olds.length) await attTx(st => { olds.forEach(o => st.delete(o.id)); });
+    await attSave(file, 'tb', note);
+    await refreshAttachments();
+  } catch (e) {}
+}
+window.attPreview = function (id) {
+  const a = attCache.find(x => x.id === id);
+  if (!a) return;
+  const t = (a.type || '').toLowerCase();
+  const canFrame = t.includes('pdf') || t.startsWith('image/') || t.startsWith('text/');
+  const url = URL.createObjectURL(a.blob);
+  const download = () => {
+    const dl = document.createElement('a');
+    dl.href = url; dl.download = a.name;
+    document.body.appendChild(dl); dl.click(); document.body.removeChild(dl);
+  };
+  if (!canFrame) {
+    // Excel และไฟล์อื่นเปิดตัวอย่างในเบราว์เซอร์ไม่ได้ — ดาวน์โหลดให้เปิดด้วยโปรแกรมในเครื่อง
+    download();
+    toast('ไฟล์ชนิดนี้แสดงตัวอย่างในเบราว์เซอร์ไม่ได้ — ดาวน์โหลดให้แล้ว เปิดด้วย Excel/โปรแกรมที่เกี่ยวข้อง');
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    return;
+  }
+  let ov = document.getElementById('attOverlay');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'attOverlay';
+  ov.innerHTML = '<div class="po-bar"><span class="po-title">👁 ' + escapeHtml(a.name) + '</span><span class="po-spacer"></span>'
+    + '<button class="btn-outline btn-sm" id="attDl" type="button">⬇ ดาวน์โหลด</button>'
+    + '<button class="btn-outline btn-sm" id="attClose" type="button">✕ ปิด</button></div>'
+    + '<div class="po-paper">' + (t.startsWith('image/')
+        ? '<div style="text-align:center; padding:10px"><img src="' + url + '" style="max-width:100%"></div>'
+        : '<iframe src="' + url + '" title="attachment-preview"></iframe>') + '</div>';
+  document.body.appendChild(ov);
+  document.getElementById('attClose').onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
+  document.getElementById('attDl').onclick = download;
+};
 
 /* ---------- Workflow / Sign-off ---------- */
 const WF_STATUS = {
@@ -2046,6 +2201,7 @@ function readFile(input, slot) {
       else if (slot === 'C') { parsedC = parsed; $('metaC').textContent = describeParsed(parsed); }
       else { parsedB = parsed; $('metaB').textContent = describeParsed(parsed); }
       autoFillWht(slot, parsed);
+      attSaveTb(file, slot);   // เก็บไฟล์งบทดลองเข้าเอกสารแนบอัตโนมัติ
       $('importError').style.display = 'none';
       renderCompare();
     } catch (err) {
@@ -2785,7 +2941,8 @@ function stepComplete(n) {
   if (!c) return false;
   if (n === 1) return !!($('coName').value.trim() && /^\d{13}$/.test($('coTaxId').value.trim()) && $('coYearEnd').value.trim()
     && document.querySelector('input[name="entityType"]:checked'));
-  if (n === 2) return true;
+  // ขั้น 2 เขียวเมื่อนำเข้างบทดลองแล้ว (ในรอบนี้ หรือมีไฟล์งบทดลองเก็บไว้ในเอกสารแนบ)
+  if (n === 2) return !!(parsedA || parsedB || parsedC || attCache.some(a => a.kind === 'tb'));
   if (n === 3) return $('inProfit').value.trim() !== '';
   if (n === 4) return !!lastResult;
   if (n === 5) return ensureWorkflow(c).status === 'approved';
