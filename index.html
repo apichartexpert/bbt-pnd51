@@ -872,6 +872,7 @@ function loadDB() {
     if (raw) db = JSON.parse(raw);
   } catch (e) { /* ข้อมูลเสีย เริ่มใหม่ */ }
   if (!Array.isArray(db.companies)) db.companies = [];
+  if (!Array.isArray(db.deletedIds)) db.deletedIds = [];   // รายชื่อบริษัทที่ลบแล้ว (tombstone) — กันระบบกลาง/เครื่องอื่นดันข้อมูลที่ลบกลับมา
   if (!Array.isArray(db.employees)) db.employees = [];
   if (db.companies.length === 0) {
     db.companies.push(newCompany());
@@ -1014,9 +1015,11 @@ $('btnDeleteCompany').addEventListener('click', () => {
   if (!confirm(`ลบบริษัท "${c.name || '(ยังไม่ตั้งชื่อ)'}" และประวัติทั้งหมดของบริษัทนี้?`)) return;
   attDeleteByCompany(c.id);   // ลบไฟล์แนบของบริษัทนี้ในเครื่องด้วย
   db.companies = db.companies.filter(x => x.id !== c.id);
+  if (!db.deletedIds.includes(c.id)) db.deletedIds.push(c.id);   // จดว่าลบแล้ว — ตอน push จะลบบนระบบกลางด้วย และกันถูกดันกลับมา
   if (db.companies.length === 0) db.companies.push(newCompany());
   db.activeId = db.companies[0].id;
   saveDB(); renderCompanySelect(); loadCompanyToForm();
+  toast('ลบบริษัทแล้ว' + (cloudUser && cloudApproved ? ' — กำลังลบออกจากระบบกลางด้วย' : ''));
 });
 // ---- ค้นหาบริษัท: เทียบชื่อแบบตัดคำนำหน้า/ต่อท้ายนิติบุคคลทิ้ง (บริษัท/หจก./จำกัด ฯลฯ) หรือเทียบ Job Code ----
 function companySearchKey(s) {
@@ -1259,6 +1262,11 @@ function applyImportedData(data) {
       if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
       if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
       if (!Array.isArray(ic.history)) ic.history = [];
+      // นำเข้าไฟล์ที่มีบริษัทที่เคยลบ = ตั้งใจเอากลับมา → ยกเลิกสถานะลบ
+      if (db.deletedIds.includes(ic.id)) {
+        db.deletedIds = db.deletedIds.filter(x => x !== ic.id);
+        delete pushedJson['_del_' + ic.id];
+      }
       const idx = db.companies.findIndex(x => x.id === ic.id);
       if (idx >= 0) { db.companies[idx] = ic; updated++; }
       else { db.companies.push(ic); added++; }
@@ -2950,12 +2958,18 @@ async function loadEmployeesFromUsers() {
 async function startSync() {
   if (!fbDb || !cloudUser || !cloudApproved) return;
   try {
+    // 0) รายชื่อบริษัทที่ถูกลบ (จากเครื่องไหนก็ตาม) — รวมกับของเครื่องนี้ แล้วใช้กรองไม่ให้ของที่ลบแล้วกลับมา
+    try {
+      const delDoc = await fbDb.collection('meta').doc('deleted').get();
+      const remoteDel = (delDoc.exists && Array.isArray(delDoc.data().ids)) ? delDoc.data().ids : [];
+      db.deletedIds = [...new Set([...(db.deletedIds || []), ...remoteDel])];
+    } catch (e) { /* ไม่มีเอกสารนี้ก็ไม่เป็นไร */ }
     // 1) ดึงข้อมูลส่วนกลางมารวมกับในเครื่อง (ใครใหม่กว่าใช้อันนั้น)
     const snap = await fbDb.collection('companies').get();
     applyingRemote = true;
     snap.forEach(d => {
       const rc = d.data();
-      if (!rc || !rc.id) return;
+      if (!rc || !rc.id || db.deletedIds.includes(rc.id)) return;
       const idx = db.companies.findIndex(x => x.id === rc.id);
       // เสมอกันให้ "เครื่องนี้ชนะ" — ของในเครื่องคือสิ่งที่ผู้ใช้เห็น/เพิ่งทำอยู่ ถ้าแพ้ tie ข้อมูลที่กรอกจะหายทั้งที่ไม่มีใครแก้ทับจริง
       if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; else return; }
@@ -2964,6 +2978,9 @@ async function startSync() {
       companyStamp[rc.id] = companyProbe(rc);
       pushedJson[rc.id] = JSON.stringify(rc);
     });
+    // เอาบริษัทที่ถูกลบ (จากเครื่องอื่น) ออกจากเครื่องนี้ด้วย
+    db.companies = db.companies.filter(c => !db.deletedIds.includes(c.id));
+    if (db.companies.length === 0) db.companies.push(newCompany());
     // ฐานพนักงาน = บัญชีผู้ใช้ระบบกลางที่อนุมัติแล้ว (ชื่อ + บทบาท Staff/Manager/Partner)
     await loadEmployeesFromUsers();
     if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
@@ -2979,9 +2996,16 @@ async function startSync() {
       let changed = false;
       applyingRemote = true;
       s.docChanges().forEach(ch => {
-        if (ch.type === 'removed') return;
+        if (ch.type === 'removed') {
+          // เครื่องอื่นลบบริษัทนี้ → ลบในเครื่องนี้ตาม และจดกันไม่ให้กลับมา
+          const rid = ch.doc.id;
+          const di = db.companies.findIndex(x => x.id === rid);
+          if (di >= 0) { db.companies.splice(di, 1); changed = true; }
+          if (!db.deletedIds.includes(rid)) db.deletedIds.push(rid);
+          return;
+        }
         const rc = ch.doc.data();
-        if (!rc || !rc.id) return;
+        if (!rc || !rc.id || db.deletedIds.includes(rc.id)) return;
         const idx = db.companies.findIndex(x => x.id === rc.id);
         if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; } else return; }
         else { db.companies.push(rc); changed = true; }
@@ -2991,6 +3015,8 @@ async function startSync() {
       });
       applyingRemote = false;
       if (changed) {
+        if (db.companies.length === 0) db.companies.push(newCompany());
+        if (!db.companies.some(c => c.id === db.activeId)) db.activeId = db.companies[0].id;
         safeStore.set(JSON.stringify(db));
         renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
         toast('มีข้อมูลอัปเดตจากระบบกลาง');
@@ -3023,6 +3049,19 @@ async function cloudPushNow() {
       batch.set(fbDb.collection('meta').doc('employees'), { list: JSON.parse(ej), _syncAt: Date.now() });
       pushedJson['_employees'] = ej;
       sentIds.push('_employees');
+    }
+    // ลบบริษัทที่ผู้ใช้สั่งลบ ออกจากระบบกลางด้วย + บันทึกรายชื่อที่ลบ (กันเครื่องอื่นดันกลับมา)
+    (db.deletedIds || []).forEach(id => {
+      if (pushedJson['_del_' + id]) return;
+      batch.delete(fbDb.collection('companies').doc(id));
+      pushedJson['_del_' + id] = '1';
+      sentIds.push('_del_' + id);
+    });
+    const dj = JSON.stringify(db.deletedIds || []);
+    if (pushedJson['_deletedIds'] !== dj) {
+      batch.set(fbDb.collection('meta').doc('deleted'), { ids: JSON.parse(dj), _syncAt: Date.now() });
+      pushedJson['_deletedIds'] = dj;
+      sentIds.push('_deletedIds');
     }
     if (sentIds.length) {
       await batch.commit();
