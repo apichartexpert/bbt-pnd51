@@ -910,6 +910,23 @@ function loadCompanyToForm() {
   const setPY = (id, v) => { $(id).value = v ? fmt(v) : ''; };
   setPY('inPYAddBack', py.addBack); setPY('inPYExempt', py.exempt); setPY('inPYLossUsed', py.lossUsed);
   setPY('inPYCit', py.cit); setPY('inPYWht', py.wht); setPY('inPYPayable', py.payable);
+  // คืนตัวเลขประมาณการ (ขั้น 3-4) และงบทดลองที่เคยนำเข้าของบริษัทนี้
+  const est = c.est || {};
+  $('inRevenue').value = est.revenue || '';
+  $('inExpense').value = est.expense || '';
+  $('inProfit').value = est.profit || '';
+  $('inAddBack').value = est.addBack || '';
+  $('inExempt').value = est.exempt || '';
+  $('inLastYearProfit').value = est.lastYearProfit || '';
+  $('inWht').value = est.wht || '';
+  $('inLossUsed').value = est.lossUsed || '';
+  parsedA = (c.tb && c.tb.A) || null;
+  parsedB = (c.tb && c.tb.B) || null;
+  parsedC = (c.tb && c.tb.C) || null;
+  $('metaA').textContent = parsedA ? describeParsed(parsedA) : '';
+  $('metaB').textContent = parsedB ? describeParsed(parsedB) : '';
+  $('metaC').textContent = parsedC ? describeParsed(parsedC) : '';
+  renderCompare();
   syncCYFields();
   renderLossTable();
   renderHistory();
@@ -934,6 +951,12 @@ function saveCompanyFromForm() {
   py.lossUsed = parseNum($('inPYLossUsed').value);
   py.cit = parseNum($('inPYCit').value); py.wht = parseNum($('inPYWht').value);
   py.payable = parseNum($('inPYPayable').value);
+  // เก็บตัวเลขประมาณการ (ขั้น 3-4) ติดตัวบริษัท — เก็บเป็นข้อความตามที่พิมพ์ เพื่อแยก "ว่าง" กับ "0" ได้
+  c.est = {
+    revenue: $('inRevenue').value, expense: $('inExpense').value, profit: $('inProfit').value,
+    addBack: $('inAddBack').value, exempt: $('inExempt').value, lastYearProfit: $('inLastYearProfit').value,
+    wht: $('inWht').value, lossUsed: $('inLossUsed').value
+  };
   saveDB();
   renderCompanySelect();
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
@@ -979,8 +1002,8 @@ $('inCYLossUsed').addEventListener('change', () => {
   $('inCYLossUsed').value = $('inLossUsed').value;
   renderPriorYearTax();
 });
-['inWht', 'inLossUsed', 'inProfit', 'inAddBack', 'inExempt']
-  .forEach(id => $(id).addEventListener('change', () => { syncCYFields(); renderPriorYearTax(); }));
+['inWht', 'inLossUsed', 'inProfit', 'inAddBack', 'inExempt', 'inRevenue', 'inExpense', 'inLastYearProfit']
+  .forEach(id => $(id).addEventListener('change', () => { syncCYFields(); renderPriorYearTax(); saveCompanyFromForm(); }));
 
 function syncRadioStyle() {
   document.querySelectorAll('#entityTypeRow label').forEach(l => {
@@ -1369,12 +1392,14 @@ window.attPreview = function (id) {
 const WF_STATUS = {
   draft:     { label: 'ร่าง (ยังไม่ส่งตรวจ)', cls: 'wf-draft' },
   submitted: { label: 'รอตรวจสอบ', cls: 'wf-submitted' },
-  reviewed:  { label: 'ผ่านการตรวจ · รออนุมัติ', cls: 'wf-reviewed' },
+  checked:   { label: 'ตรวจแล้ว · รอส่งให้ผู้อนุมัติ', cls: 'wf-reviewed' },
+  reviewed:  { label: 'ส่งอนุมัติแล้ว · รออนุมัติ', cls: 'wf-reviewed' },
   approved:  { label: 'อนุมัติแล้ว', cls: 'wf-approved' }
 };
 const WF_ACTION = {
   submit:          { label: 'ส่งให้ตรวจสอบ', role: 'ผู้จัดทำ', ico: 'sub', icon: '📤' },
   'review-pass':   { label: 'ผ่านการตรวจสอบ', role: 'ผู้ตรวจสอบ', ico: 'ok', icon: '✔' },
+  'send-approve':  { label: 'ส่งให้ผู้อนุมัติ', role: 'ผู้ตรวจสอบ', ico: 'sub', icon: '📨' },
   'review-reject': { label: 'ตีกลับให้แก้ไข', role: 'ผู้ตรวจสอบ', ico: 'rej', icon: '↩' },
   approve:         { label: 'อนุมัติ', role: 'ผู้อนุมัติ', ico: 'ok', icon: '✅' },
   'approve-reject':{ label: 'ตีกลับ', role: 'ผู้อนุมัติ', ico: 'rej', icon: '↩' },
@@ -1411,25 +1436,28 @@ function renderWorkflow() {
   $('wfBadge').className = 'wf-badge ' + st.cls;
   $('wfBadge').textContent = st.label
     + (wf.status === 'submitted' && wf.assigned.reviewer ? ` (ส่งให้ ${wf.assigned.reviewer})` : '')
+    + (wf.status === 'checked' && wf.current.reviewer ? ` (ตรวจโดย ${wf.current.reviewer.name})` : '')
     + (wf.status === 'reviewed' && wf.assigned.approver ? ` (ส่งให้ ${wf.assigned.approver})` : '');
   $('wfSnapshot').textContent = wf.snapshot
     ? `(ยอดที่ส่งตรวจ: ภาษีที่ต้องชำระ ${fmt(Math.max(wf.snapshot.netPay, 0))} บาท · ส่งเมื่อ ${fmtDateTime(wf.snapshot.at)})`
     : '';
 
   const stepRole = wf.status === 'draft' ? 'ผู้จัดทำ (Preparer)'
-                 : wf.status === 'submitted' ? 'ผู้ตรวจสอบ (Reviewer)'
+                 : (wf.status === 'submitted' || wf.status === 'checked') ? 'ผู้ตรวจสอบ (Reviewer)'
                  : wf.status === 'reviewed' ? 'ผู้อนุมัติ (Approver)' : '';
-  // ผู้ดำเนินการ: กรองรายชื่อตามหน้าที่ของขั้นนั้น (ร่าง=ผู้จัดทำ · รอตรวจ=ผู้ตรวจสอบ · รออนุมัติ=ผู้อนุมัติ)
+  // ผู้ดำเนินการ: กรองรายชื่อตามหน้าที่ของขั้นนั้น (ร่าง=ผู้จัดทำ · รอตรวจ/ตรวจแล้ว=ผู้ตรวจสอบ · รออนุมัติ=ผู้อนุมัติ)
   const actorCap = wf.status === 'draft' ? 'preparer'
-                 : wf.status === 'submitted' ? 'reviewer'
+                 : (wf.status === 'submitted' || wf.status === 'checked') ? 'reviewer'
                  : wf.status === 'reviewed' ? 'approver' : 'preparer';
   const defName = wf.status === 'draft' ? c.preparer
                 : wf.status === 'submitted' ? (wf.assigned.reviewer || c.reviewer)
+                : wf.status === 'checked' ? ((wf.current.reviewer && wf.current.reviewer.name) || wf.assigned.reviewer || c.reviewer)
                 : wf.status === 'reviewed' ? (wf.assigned.approver || c.approver) : '';
   $('wfActor').innerHTML = empOptionsFor(actorCap, defName, 'เลือกผู้ดำเนินการ');
   $('wfActor').value = defName || '';
 
-  // ช่อง "ส่งให้ใคร": ขั้นร่างเลือกจากรายชื่อผู้ตรวจสอบ · ขั้นรอตรวจเลือกจากรายชื่อผู้อนุมัติ
+  // ช่อง "ส่งให้ใคร": ขั้นร่างเลือกจากรายชื่อผู้ตรวจสอบ · ขั้น "ตรวจแล้ว" เลือกจากรายชื่อผู้อนุมัติ
+  // (ขั้นรอตรวจไม่ต้องเลือก — ผู้ตรวจกด "ผ่านการตรวจ" ก่อน แล้วค่อยเลือกผู้อนุมัติเป็นอีกจังหวะ)
   const sendField = $('wfSendToField');
   if (wf.status === 'draft') {
     sendField.style.display = '';
@@ -1437,7 +1465,7 @@ function renderWorkflow() {
     const dr = wf.assigned.reviewer || c.reviewer || '';
     $('wfSendTo').innerHTML = empOptionsFor('reviewer', dr, 'เลือกผู้ตรวจสอบที่จะส่งให้');
     $('wfSendTo').value = dr;
-  } else if (wf.status === 'submitted') {
+  } else if (wf.status === 'checked') {
     sendField.style.display = '';
     $('wfSendToLabel').textContent = 'ส่งให้ผู้อนุมัติ (Approver)';
     const da = wf.assigned.approver || c.approver || '';
@@ -1465,7 +1493,12 @@ function renderWorkflow() {
     else needRole = 'Staff หรือ Manager';
   } else if (wf.status === 'submitted') {
     if (gate('review')) {
-      b += `<button class="btn-approve btn-sm" onclick="wfDo('review-pass')" type="button">✔ ผ่านการตรวจ – ส่งอนุมัติ</button>`;
+      b += `<button class="btn-approve btn-sm" onclick="wfDo('review-pass')" type="button">✔ ผ่านการตรวจ</button>`;
+      b += `<button class="btn-reject btn-sm" onclick="wfDo('review-reject')" type="button">↩ ตีกลับให้แก้ไข</button>`;
+    } else needRole = 'Manager หรือ Partner';
+  } else if (wf.status === 'checked') {
+    if (gate('review')) {
+      b += `<button class="btn-primary btn-sm" onclick="wfDo('send-approve')" type="button">📨 ส่งให้ผู้อนุมัติ</button>`;
       b += `<button class="btn-reject btn-sm" onclick="wfDo('review-reject')" type="button">↩ ตีกลับให้แก้ไข</button>`;
     } else needRole = 'Manager หรือ Partner';
   } else if (wf.status === 'reviewed') {
@@ -1522,11 +1555,15 @@ window.wfDo = function (action) {
     wf.assigned.reviewer = target;
     wf.current = { preparer: { name, at } };
   } else if (action === 'review-pass') {
+    // จังหวะที่ 1 ของผู้ตรวจ: บันทึกว่าตรวจผ่าน (เซ็นชื่อ) — ยังไม่ส่งให้ผู้อนุมัติ
+    wf.status = 'checked';
+    wf.current.reviewer = { name, at };
+  } else if (action === 'send-approve') {
+    // จังหวะที่ 2 ของผู้ตรวจ: เลือกผู้อนุมัติแล้วส่งต่อ
     target = $('wfSendTo').value;
     if (!target) { toast('กรุณาเลือกผู้อนุมัติ (Approver) ที่จะส่งให้'); return; }
     wf.status = 'reviewed';
     wf.assigned.approver = target;
-    wf.current.reviewer = { name, at };
   } else if (action === 'approve') {
     wf.status = 'approved'; wf.current.approver = { name, at };
   } else if (action === 'review-reject' || action === 'approve-reject' || action === 'reopen') {
@@ -1538,7 +1575,8 @@ window.wfDo = function (action) {
   saveDB();
   renderWorkflow();
   if (lastResult) renderPndSummary(lastResult);
-  const msg = { submit: 'ส่งให้ตรวจสอบแล้ว', 'review-pass': 'ผ่านการตรวจ – ส่งให้อนุมัติแล้ว',
+  const msg = { submit: 'ส่งให้ตรวจสอบแล้ว', 'review-pass': 'บันทึกผ่านการตรวจแล้ว — เลือกผู้อนุมัติแล้วกด "ส่งให้ผู้อนุมัติ" ต่อได้เลย',
+    'send-approve': 'ส่งให้ผู้อนุมัติแล้ว',
     'review-reject': 'ตีกลับให้แก้ไขแล้ว', approve: 'อนุมัติเรียบร้อย ✓', 'approve-reject': 'ตีกลับแล้ว', reopen: 'เปิดแก้ไขใหม่แล้ว' }[action];
   toast(msg || 'บันทึกแล้ว');
 };
@@ -1841,12 +1879,15 @@ function setNum(id, v) { $(id).value = fmt(v); }
 $('inRevenue').addEventListener('change', () => {
   if (hasVal('inExpense')) setNum('inProfit', parseNum($('inRevenue').value) - parseNum($('inExpense').value));
   else if (hasVal('inProfit')) setNum('inExpense', parseNum($('inRevenue').value) - parseNum($('inProfit').value));
+  saveCompanyFromForm();   // เก็บช่องที่สูตรเติมให้ด้วย
 });
 $('inExpense').addEventListener('change', () => {
   if (hasVal('inRevenue')) setNum('inProfit', parseNum($('inRevenue').value) - parseNum($('inExpense').value));
+  saveCompanyFromForm();
 });
 $('inProfit').addEventListener('change', () => {
   if (hasVal('inRevenue')) setNum('inExpense', parseNum($('inRevenue').value) - parseNum($('inProfit').value));
+  saveCompanyFromForm();
 });
 
 /* ---------- บันทึก / ประวัติ ---------- */
@@ -2248,6 +2289,13 @@ function readFile(input, slot) {
       else { parsedB = parsed; $('metaB').textContent = describeParsed(parsed); }
       autoFillWht(slot, parsed);
       attSaveTb(file, slot);   // เก็บไฟล์งบทดลองเข้าเอกสารแนบอัตโนมัติ
+      // เก็บข้อมูลงบที่อ่านได้ติดตัวบริษัทไว้ถาวร — ปิด/เปิดใหม่หรือเปิดเครื่องอื่น (ผ่านระบบกลาง) ก็ยังอยู่
+      const cc = activeCompany();
+      if (cc) {
+        if (!cc.tb || typeof cc.tb !== 'object') cc.tb = {};
+        cc.tb[slot] = parsed;
+        saveDB();
+      }
       $('importError').style.display = 'none';
       renderCompare();
     } catch (err) {
@@ -2948,6 +2996,7 @@ function jobStatusOf(c) {
   const wf = ensureWorkflow(c);
   if (wf.status === 'approved') return 'done';
   if (wf.status === 'submitted') return 'submitted';
+  if (wf.status === 'checked') return 'checked';
   if (wf.status === 'reviewed') return 'reviewed';
   if (wf.returned) return 'returned';
   if ((c.name || '').trim()) return 'inprogress';
@@ -2958,7 +3007,8 @@ const JOB_GROUPS = [
   { key: 'inprogress', title: 'อยู่ระหว่างกรอกข้อมูล', cls: 'wf-draft' },
   { key: 'returned', title: 'ส่งกลับมาแก้ไข', cls: 'wf-returned' },
   { key: 'submitted', title: 'ส่งให้ตรวจ (รอตรวจสอบ)', cls: 'wf-submitted' },
-  { key: 'reviewed', title: 'ผ่านการตรวจ (รออนุมัติ)', cls: 'wf-reviewed' },
+  { key: 'checked', title: 'ตรวจแล้ว (รอส่งให้ผู้อนุมัติ)', cls: 'wf-reviewed' },
+  { key: 'reviewed', title: 'ส่งอนุมัติแล้ว (รออนุมัติ)', cls: 'wf-reviewed' },
   { key: 'done', title: 'เสร็จเรียบร้อยแล้ว', cls: 'wf-approved' }
 ];
 function renderJobsDashboard() {
@@ -2980,6 +3030,7 @@ function renderJobsDashboard() {
     list.forEach(c => {
       const wf = ensureWorkflow(c);
       const who = (wf.status === 'submitted' && wf.assigned && wf.assigned.reviewer) ? ' · ส่งให้ ' + escapeHtml(wf.assigned.reviewer)
+                : (wf.status === 'checked' && wf.current && wf.current.reviewer) ? ' · ตรวจโดย ' + escapeHtml(wf.current.reviewer.name)
                 : (wf.status === 'reviewed' && wf.assigned && wf.assigned.approver) ? ' · ส่งให้ ' + escapeHtml(wf.assigned.approver) : '';
       h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0 6px 4px; border-bottom:1px solid var(--border)">`
         + `<span style="flex:1; min-width:160px">${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')} <span class="hint">รอบปี ${c.year || '-'}${who}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>`
@@ -2996,7 +3047,7 @@ window.openJob = function (id) {
   renderCompanySelect();
   loadCompanyToForm();
   const st = jobStatusOf(activeCompany());
-  goToStep((st === 'submitted' || st === 'reviewed' || st === 'done') ? 5
+  goToStep((st === 'submitted' || st === 'checked' || st === 'reviewed' || st === 'done') ? 5
          : (st === 'inprogress' || st === 'returned') ? 3 : 1);
   toast('เปิดงาน: ' + (activeCompany().name || '(ยังไม่ตั้งชื่อบริษัท)'));
 };
