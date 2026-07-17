@@ -1281,6 +1281,20 @@ function applyImportedData(data) {
     ? `นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`
     : `นำเข้าพนักงานสำเร็จ: เพิ่ม ${empAdded} คน`);
 }
+// ช่องวันที่จาก Excel: ถ้าเซลล์ถูก Excel เก็บเป็น "เลขลำดับวัน" (date serial) หรือ Date ให้แปลงกลับเป็นข้อความ วัน/เดือน/ปี
+function excelDateText(v) {
+  if (v instanceof Date && !isNaN(v)) return `${v.getDate()}/${v.getMonth() + 1}/${v.getFullYear()}`;
+  if (typeof v === 'number' && v > 20000 && XLSX.SSF && XLSX.SSF.parse_date_code) {
+    const d = XLSX.SSF.parse_date_code(v);
+    if (d && d.y) return `${d.d}/${d.m}/${d.y}`;   // ปีตามที่พิมพ์ใน Excel (พ.ศ. หรือ ค.ศ. โปรแกรมรับได้ทั้งคู่)
+  }
+  return String(v || '').trim();
+}
+// เลขผู้เสียภาษีจาก Excel: ถ้าเซลล์เป็นตัวเลข Excel จะตัดเลข 0 นำหน้าทิ้ง — เติมกลับให้ครบ 13 หลัก
+function excelTaxIdText(v) {
+  if (typeof v === 'number') return String(Math.round(v)).padStart(13, '0');
+  return String(v || '').trim();
+}
 // แปลงสมุด Excel (ที่ส่งออกจากโปรแกรม) กลับเป็นข้อมูล
 function workbookToData(wb) {
   const data = { companies: [], employees: [] };
@@ -1296,9 +1310,9 @@ function workbookToData(wb) {
       // ไฟล์ที่ไม่มี _json (เช่น พิมพ์เองใน Excel) — สร้างบริษัทจากคอลัมน์ที่อ่านได้
       if (r['ชื่อบริษัท']) {
         data.companies.push({
-          name: String(r['ชื่อบริษัท']).trim(), taxId: String(r['เลขผู้เสียภาษี'] || '').trim(),
+          name: String(r['ชื่อบริษัท']).trim(), taxId: excelTaxIdText(r['เลขผู้เสียภาษี']),
           year: parseInt(r['รอบปี พ.ศ.']) || (new Date().getFullYear() + 543),
-          jobCode: String(r['Job Code'] || '').trim(), yearEnd: String(r['วันสิ้นรอบบัญชี'] || '').trim(),
+          jobCode: String(r['Job Code'] || '').trim(), yearEnd: excelDateText(r['วันสิ้นรอบบัญชี']),
           entityType: String(r['ประเภท/อัตราภาษี'] || '').includes('20') ? 'general' : 'sme',
           preparer: String(r['ผู้จัดทำ'] || '').trim(), reviewer: String(r['ผู้ตรวจสอบ'] || '').trim(),
           approver: String(r['ผู้อนุมัติ'] || '').trim()
