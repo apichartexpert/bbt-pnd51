@@ -195,6 +195,7 @@
   table.calc { width: 100%; border-collapse: collapse; font-size: .95rem; }
   table.calc td { padding: 8px 6px; border-bottom: 1px dashed var(--border); vertical-align: top; }
   table.calc td.amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.calc td.how { color: var(--gray); font-size: .85rem; font-weight: 400; text-align: right; font-variant-numeric: tabular-nums; }
   table.calc tr.sub td { padding-left: 26px; color: var(--gray); font-size: .87rem; font-weight: 400; }
   table.calc tr.sub td.amt { font-weight: 400; }
   table.calc tr.total td {
@@ -1601,28 +1602,43 @@ function calculate() {
 function renderResult() {
   const r = lastResult;
   const tbl = $('calcTable');
-  let rows = '';
-  if (r.revenue) rows += `<tr class="sub"><td>ประมาณการรายได้ทั้งปี</td><td class="amt">${fmt(r.revenue)}</td></tr>`;
-  if (r.expense) rows += `<tr class="sub"><td>หัก ประมาณการรายจ่ายทั้งปี</td><td class="amt">(${fmt(r.expense)})</td></tr>`;
-  rows += `<tr><td>ประมาณการกำไร(ขาดทุน)สุทธิทางบัญชีทั้งปี</td><td class="amt">${fmt(r.profit)}</td></tr>`;
-  if (r.addBack) rows += `<tr class="sub"><td>บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย</td><td class="amt">${fmt(r.addBack)}</td></tr>`;
-  if (r.exempt) rows += `<tr class="sub"><td>หัก รายได้ที่ได้รับการยกเว้น</td><td class="amt">(${fmt(r.exempt)})</td></tr>`;
-  if (r.addBack || r.exempt) rows += `<tr><td><b>กำไรสุทธิทางภาษีก่อนหักขาดทุนสะสม</b></td><td class="amt">${fmt(r.taxableBeforeLoss)}</td></tr>`;
-  if (r.lossUsed) rows += `<tr class="sub"><td>หัก ขาดทุนสะสมยกมาที่นำมาใช้</td><td class="amt">(${fmt(r.lossUsed)})</td></tr>`;
-  rows += `<tr><td><b>กำไร(ขาดทุน)สุทธิเพื่อเสียภาษี (ทั้งปี)</b></td><td class="amt">${fmt(r.taxableProfit)}</td></tr>`;
-  rows += `<tr><td>กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)</td><td class="amt">${fmt(r.half)}</td></tr>`;
-  if (r.entityType === 'sme') {
-    rows += `<tr><td colspan="2" style="font-weight:600;color:var(--blue-dark)">ภาษีคำนวณตามอัตรา SME</td></tr>`;
-    r.brackets.forEach(b => {
-      rows += `<tr class="sub"><td>${b.label} — ฐาน ${fmt(b.amount)}</td><td class="amt">${fmt(b.tax)}</td></tr>`;
-    });
-  } else {
-    rows += `<tr><td>ภาษีคำนวณ อัตรา 20%</td><td class="amt">${fmt(r.tax)}</td></tr>`;
+  // คอลัมน์กลาง "วิธีคำนวณ" แสดงที่มาของตัวเลขแต่ละบรรทัด
+  const tr3 = (label, how, amt, cls) => `<tr class="${cls || ''}"><td>${label}</td><td class="how">${how || ''}</td><td class="amt">${amt}</td></tr>`;
+  let rows = `<tr><th style="text-align:left">รายการ</th><th class="amt">วิธีคำนวณ</th><th class="amt">จำนวนเงิน (บาท)</th></tr>`;
+  if (r.revenue) rows += tr3('ประมาณการรายได้ทั้งปี', '', fmt(r.revenue), 'sub');
+  if (r.expense) rows += tr3('หัก ประมาณการรายจ่ายทั้งปี', '', '(' + fmt(r.expense) + ')', 'sub');
+  rows += tr3('ประมาณการกำไร(ขาดทุน)สุทธิทางบัญชีทั้งปี',
+    (r.revenue && r.expense) ? `${fmt(r.revenue)} − ${fmt(r.expense)}` : '',
+    fmt(r.profit));
+  if (r.addBack) rows += tr3('บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย', '', fmt(r.addBack), 'sub');
+  if (r.exempt) rows += tr3('หัก รายได้ที่ได้รับการยกเว้น', '', '(' + fmt(r.exempt) + ')', 'sub');
+  if (r.addBack || r.exempt) {
+    rows += tr3('<b>กำไรสุทธิทางภาษีก่อนหักขาดทุนสะสม</b>',
+      `${fmt(r.profit)} + ${fmt(r.addBack)} − ${fmt(r.exempt)}`,
+      fmt(r.taxableBeforeLoss));
   }
-  rows += `<tr><td><b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b></td><td class="amt">${fmt(r.tax)}</td></tr>`;
-  rows += `<tr><td>หัก ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก</td><td class="amt">(${fmt(r.wht)})</td></tr>`;
+  if (r.lossUsed) rows += tr3('หัก ขาดทุนสะสมยกมาที่นำมาใช้', '', '(' + fmt(r.lossUsed) + ')', 'sub');
+  rows += tr3('<b>กำไร(ขาดทุน)สุทธิเพื่อเสียภาษี (ทั้งปี)</b>',
+    r.lossUsed ? `${fmt(r.taxableBeforeLoss)} − ${fmt(r.lossUsed)}` : '',
+    fmt(r.taxableProfit));
+  rows += tr3('กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)',
+    `${fmt(Math.max(r.taxableProfit, 0))} ÷ 2`,
+    fmt(r.half));
+  if (r.entityType === 'sme') {
+    rows += `<tr><td colspan="3" style="font-weight:600;color:var(--blue-dark)">ภาษีคำนวณตามอัตรา SME (ขั้นบันได จากฐานภาษีครึ่งปี ${fmt(r.half)})</td></tr>`;
+    r.brackets.forEach(b => {
+      rows += tr3(b.label,
+        b.rate ? `${fmt(b.amount)} × ${b.rate}%` : `${fmt(b.amount)} × 0% (ยกเว้น)`,
+        fmt(b.tax), 'sub');
+    });
+    rows += tr3('<b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b>', 'รวมภาษีทุกขั้น', fmt(r.tax));
+  } else {
+    rows += tr3('ภาษีคำนวณ อัตรา 20%', `${fmt(r.half)} × 20%`, fmt(r.tax));
+    rows += tr3('<b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b>', '', fmt(r.tax));
+  }
+  rows += tr3('หัก ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก', '', '(' + fmt(r.wht) + ')');
   const payable = Math.max(r.netPay, 0);
-  rows += `<tr class="total"><td>ภาษีที่ต้องชำระตามแบบ ภ.ง.ด.51</td><td class="amt">${fmt(payable)}</td></tr>`;
+  rows += `<tr class="total"><td>ภาษีที่ต้องชำระตามแบบ ภ.ง.ด.51</td><td class="how">${fmt(r.tax)} − ${fmt(r.wht)}</td><td class="amt">${fmt(payable)}</td></tr>`;
   tbl.innerHTML = rows;
 
   const box = $('finalBox');
@@ -1830,6 +1846,7 @@ $('btnSave').addEventListener('click', () => {
   });
   saveDB();
   renderHistory();
+  renderProgressBar();
   toast('บันทึกผลสรุปเรียบร้อย ✓');
 });
 
@@ -1864,7 +1881,7 @@ function renderHistory() {
 window.deleteHistory = function (i) {
   const c = activeCompany();
   c.history.splice(i, 1);
-  saveDB(); renderHistory();
+  saveDB(); renderHistory(); renderProgressBar();
 };
 window.loadHistory = function (i) {
   const c = activeCompany();
@@ -2959,7 +2976,8 @@ function stepComplete(n) {
   if (n === 3) return $('inProfit').value.trim() !== '';
   if (n === 4) return !!lastResult;
   if (n === 5) return ensureWorkflow(c).status === 'approved';
-  if (n === 6) return true;
+  // ขั้น 6 เขียวเมื่อมีผลสรุปบันทึกไว้ในประวัติของบริษัทนี้อย่างน้อย 1 รายการ
+  if (n === 6) return !!(c.history && c.history.length);
   return false;
 }
 
