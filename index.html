@@ -2341,13 +2341,21 @@ function computePriorYearTax() {
   const citComputed = (accProfit !== null) ? estimateTaxOn(Math.max(taxable, 0), c.entityType) : 0;
   const cit = py.cit > 0 ? py.cit : citComputed;
   const citIsComputed = !(py.cit > 0) && accProfit !== null;
-  const payable = py.payable > 0 ? py.payable : Math.max(cit - py.wht, 0);
+  // ติดลบได้ = ชำระไว้เกิน (WHT มากกว่า CIT) — แสดงเป็นยอดขอคืน ไม่ปัดเป็น 0
+  const payable = py.payable > 0 ? py.payable : (cit - py.wht);
   return { accProfit, addBack: py.addBack, exempt: py.exempt, lossUsed, taxable, cit, citIsComputed, wht: py.wht, payable };
 }
-// คำนวณปีปัจจุบัน (ประมาณการ ภ.ง.ด.51) แบบสด จากช่องกรอกส่วนที่ 4 — ไม่แตะ lastResult
+// คำนวณปีปัจจุบัน (ประมาณการ ภ.ง.ด.51) แบบสด — ใช้ช่องกรอกขั้น 3 ถ้ามี ไม่มีก็ใช้งบที่นำเข้า (C ก่อน แล้ว B, A ปัดพัน)
 function computeCurrentPreview() {
   const c = activeCompany();
-  const profit = parseNum($('inProfit').value);
+  const manual = $('inProfit').value.trim() !== '';
+  const est = estimatePeriod();
+  let profit = parseNum($('inProfit').value);
+  let src = '';
+  if (!manual && est) {
+    profit = roundedLines(est).net;
+    src = (est === parsedC) ? 'จากงบ C ปัดพัน' : (est === parsedB) ? 'จากงบ B ปัดพัน' : 'จากงบ A ปัดพัน';
+  }
   const addBack = parseNum($('inAddBack').value);
   const exempt = parseNum($('inExempt').value);
   const wht = parseNum($('inWht').value);
@@ -2356,8 +2364,8 @@ function computeCurrentPreview() {
   const taxable = taxableBeforeLoss - lossUsed;
   const half = Math.max(taxable, 0) / 2;
   const tax = estimateTaxOn(half, c.entityType);
-  return { profit, addBack, exempt, lossUsed, taxable, half, tax, wht, payable: Math.max(tax - wht, 0),
-           hasData: $('inProfit').value.trim() !== '' };
+  return { profit, addBack, exempt, lossUsed, taxable, half, tax, wht, payable: tax - wht,
+           hasData: manual || !!est, src };
 }
 // ตารางเปรียบเทียบภาษี ปีก่อน (เต็มปี) vs ปีปัจจุบัน (ประมาณการครึ่งปี)
 function renderPriorYearTax() {
@@ -2373,12 +2381,17 @@ function renderPriorYearTax() {
   }
   const F = v => (v === null || v === undefined) ? '–' : fmt(v);
   const Fn = v => (v === null || v === undefined) ? '–' : (v ? '(' + fmt(v) + ')' : fmt(0));
+  // ยอดชำระ: ติดลบ = ชำระไว้เกิน (ขอคืน/เครดิต) แสดงชัด ๆ ไม่ปัดเป็น 0
+  const Fpay = v => (v === null || v === undefined) ? '–'
+    : (v < 0 ? `<span style="color:#1e7d43">ชำระไว้เกิน ${fmt(-v)}</span>` : fmt(v));
   const pyProfit = P.accProfit;
   const cyProfit = N.hasData ? N.profit : null;
   let rows = '';
   rows += `<thead><tr><th style="text-align:left">รายการ</th><th class="amt">ปีก่อน (ภ.ง.ด.50 เต็มปี)</th><th class="amt">ปีปัจจุบัน (ประมาณการ ภ.ง.ด.51)</th></tr></thead><tbody>`;
   const tr = (label, a, b, cls) => `<tr class="${cls || ''}"><td>${label}</td><td class="amt">${a}</td><td class="amt">${b}</td></tr>`;
-  rows += tr('กำไร(ขาดทุน)สุทธิทางบัญชี', F(pyProfit) + (pyProfit !== null ? ' <span class="hint">(จากงบ A)</span>' : ''), F(cyProfit));
+  rows += tr('กำไร(ขาดทุน)สุทธิทางบัญชี',
+             F(pyProfit) + (pyProfit !== null ? ' <span class="hint">(จากงบ A)</span>' : ''),
+             F(cyProfit) + (N.hasData && N.src ? ` <span class="hint">(${N.src})</span>` : ''));
   rows += tr('บวก ค่าใช้จ่ายที่ไม่ให้ถือเป็นรายจ่าย', F(P.addBack), N.hasData ? F(N.addBack) : '–', 'sub');
   rows += tr('หัก รายได้ที่ได้รับการยกเว้น', Fn(P.exempt), N.hasData ? Fn(N.exempt) : '–', 'sub');
   rows += tr('หัก ขาดทุนสะสมยกมาที่ใช้', Fn(P.lossUsed), N.hasData ? Fn(N.lossUsed) : '–', 'sub');
@@ -2389,10 +2402,10 @@ function renderPriorYearTax() {
              hasPY ? fmt(P.cit) + (P.citIsComputed ? ' <span class="hint">(คำนวณ)</span>' : '') : '–',
              N.hasData ? fmt(N.tax) : '–');
   rows += tr('หัก ภาษีถูกหัก ณ ที่จ่าย', Fn(P.wht), N.hasData || N.wht ? Fn(N.wht) : '–', 'sub');
-  rows += `<tr class="total"><td>ภาษีที่ต้องชำระ</td><td class="amt">${hasPY ? fmt(P.payable) : '–'}</td><td class="amt">${N.hasData ? fmt(N.payable) : '–'}</td></tr>`;
+  rows += `<tr class="total"><td>ภาษีที่ต้องชำระ</td><td class="amt">${hasPY ? Fpay(P.payable) : '–'}</td><td class="amt">${N.hasData ? Fpay(N.payable) : '–'}</td></tr>`;
   rows += '</tbody>';
   wrap.innerHTML = `<div style="overflow-x:auto"><table class="calc" style="margin-top:8px">${rows}</table></div>
-    <p class="note">ปีก่อนคิดภาษีจากกำไรเต็มปี (ตาม ภ.ง.ด.50) · ปีปัจจุบันคิดจากกึ่งหนึ่งของประมาณการ (ตาม ภ.ง.ด.51) · CIT "(คำนวณ)" = คำนวณจากงบทดลอง A + รายการปรับปรุงข้างต้น หากกรอก CIT เองจะใช้ค่าที่กรอก</p>`;
+    <p class="note">ปีก่อนคิดภาษีจากกำไรเต็มปี (ตาม ภ.ง.ด.50) · ปีปัจจุบันคิดจากกึ่งหนึ่งของประมาณการ (ตาม ภ.ง.ด.51) · CIT "(คำนวณ)" = คำนวณจากงบทดลอง A + รายการปรับปรุงข้างต้น หากกรอก CIT เองจะใช้ค่าที่กรอก · "ชำระไว้เกิน" = ภาษีถูกหัก ณ ที่จ่ายมากกว่าภาษีที่คำนวณได้ (ขอคืน/เครดิตได้) · ปีปัจจุบันถ้ายังไม่กรอกประมาณการในขั้น 3 จะแสดงจากงบที่นำเข้าให้ก่อน</p>`;
 }
 
 function estLabel(p) {
