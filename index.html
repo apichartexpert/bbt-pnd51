@@ -356,27 +356,27 @@
   @media print {
     body { background: #fff; padding: 0; }
     .screen-only { display: none !important; }
-    #printReport { display: block; font-size: 14px; }
-    #printReport h1 { font-size: 19px; text-align: center; margin-bottom: 2px; }
-    #printReport .sub-title { text-align: center; color: #444; margin-bottom: 12px; font-size: 12px; }
-    #printReport .hdr { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; border: 1px solid #999; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+    #printReport { display: block; font-size: 16px; }
+    #printReport h1 { font-size: 22px; text-align: center; margin-bottom: 2px; }
+    #printReport .sub-title { text-align: center; color: #444; margin-bottom: 12px; font-size: 15px; }
+    #printReport .hdr { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; border: 1px solid #999; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 15px; }
     #printReport .hdr .h-l { flex: 1.2; text-align: left; }
     #printReport .hdr .h-c { flex: 1; text-align: center; }
     #printReport .hdr .h-r { flex: 1; text-align: right; }
-    #printReport .hdr .lbl { color: #666; font-size: 11px; }
-    #printReport .box { border: 1px solid #999; border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
+    #printReport .hdr .lbl { color: #666; font-size: 15px; }
+    #printReport .box { border: 1px solid #999; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
     #printReport .box.main { max-width: 680px; margin-left: auto; margin-right: auto; }
-    #printReport .cols { display: flex; gap: 10px; align-items: flex-start; }
-    #printReport .cols .col-l { flex: 1.45; min-width: 0; }
+    #printReport .cols { display: flex; gap: 8px; align-items: flex-start; }
+    #printReport .cols .col-l { flex: 1.8; min-width: 0; }
     #printReport .cols .col-r { flex: 1; min-width: 0; }
     #printReport table { width: 100%; border-collapse: collapse; }
-    #printReport td { padding: 4px 4px; vertical-align: top; }
+    #printReport td { padding: 4px 3px; vertical-align: top; }
     #printReport td.amt { text-align: right; white-space: nowrap; }
     #printReport tr.total td { border-top: 1.5px solid #000; font-weight: 700; padding-top: 8px; }
-    #printReport .warn-print { border: 1px solid #b7791f; background: #fdf3e0; border-radius: 6px; padding: 10px 14px; margin-top: 10px; font-size: 12px; }
-    #printReport .footer { margin-top: 24px; font-size: 11px; color: #666; }
+    #printReport .warn-print { border: 1px solid #b7791f; background: #fdf3e0; border-radius: 6px; padding: 10px 14px; margin-top: 10px; font-size: 15px; }
+    #printReport .footer { margin-top: 24px; font-size: 15px; color: #666; }
     #printReport .sign { margin-top: 40px; display: flex; justify-content: flex-end; gap: 16px; }
-    #printReport .sign .line { flex: 1; max-width: 220px; text-align: center; font-size: 11px; }
+    #printReport .sign .line { flex: 1; max-width: 240px; text-align: center; font-size: 15px; }
     #printReport .sign .line hr { border: none; border-top: 1px dotted #333; margin-bottom: 4px; margin-top: 36px; }
   }
 </style>
@@ -1731,41 +1731,41 @@ window.loadHistory = function (i) {
 // CSS สำหรับเอกสารพิมพ์ (ใช้ในหน้าต่างพิมพ์แยก เพื่อให้พิมพ์ได้ทุกสภาพแวดล้อม)
 const PRINT_CSS = `
   html,body { margin:0; padding:0; }
-  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; font-size:14px; line-height:1.35; }
+  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; font-size:16px; line-height:1.35; }
   #printwrap { padding:10px 12px; transform-origin: top left; }
-  h1 { font-size:19px; text-align:center; margin:0 0 2px; }
-  .sub-title { text-align:center; color:#444; margin-bottom:6px; font-size:12px; }
+  h1 { font-size:22px; text-align:center; margin:0 0 2px; }
+  .sub-title { text-align:center; color:#444; margin-bottom:6px; font-size:15px; }
   /* หัวเอกสาร 3 กลุ่ม: ซ้าย=บริษัท · กลาง=รอบบัญชี/อัตราภาษี · ขวา=สถานะ/วันที่ */
-  .hdr { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; font-size:13px; }
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; font-size:15px; }
   .hdr .h-l { flex:1.2; text-align:left; }
   .hdr .h-c { flex:1; text-align:center; }
   .hdr .h-r { flex:1; text-align:right; }
-  .hdr .lbl { color:#666; font-size:12px; }
-  .box { border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; }
+  .hdr .lbl { color:#666; font-size:15px; }
+  .box { border:1px solid #999; border-radius:6px; padding:7px 10px; margin-bottom:7px; }
   .box.main { max-width:680px; margin-left:auto; margin-right:auto; }
-  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ · ขวา = ประมาณการ/คำนวณภาษี */
-  .cols { display:flex; gap:10px; align-items:flex-start; }
-  .cols .col-l { flex:1.45; min-width:0; }
+  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ (กว้าง) · ขวา = ประมาณการ/คำนวณภาษี (แคบ) */
+  .cols { display:flex; gap:8px; align-items:flex-start; }
+  .cols .col-l { flex:1.8; min-width:0; }
   .cols .col-r { flex:1; min-width:0; }
   table { width:100%; border-collapse:collapse; }
-  td { padding:2.5px 4px; vertical-align:top; }
-  td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:18px; }
+  td { padding:2.5px 3px; vertical-align:top; }
+  td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:8px; }
   tr.total td { border-top:1.5px solid #000; font-weight:700; padding-top:5px; }
-  .warn-print { border:1px solid #b7791f; background:#fdf3e0; border-radius:6px; padding:7px 12px; margin-top:7px; font-size:12px; }
-  .footer { margin-top:10px; font-size:12px; color:#666; }
+  .warn-print { border:1px solid #b7791f; background:#fdf3e0; border-radius:6px; padding:7px 12px; margin-top:7px; font-size:15px; }
+  .footer { margin-top:10px; font-size:15px; color:#666; }
   .sign { margin-top:14px; display:flex; justify-content:flex-end; gap:16px; }
-  .sign .line { flex:1; max-width:220px; text-align:center; font-size:12px; }
+  .sign .line { flex:1; max-width:240px; text-align:center; font-size:15px; }
   .sign .line hr { border:none; border-top:1px dotted #333; margin-bottom:4px; margin-top:24px; }
-  .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:12.5px; }
-  .cmp-meta { color:#5a6472; font-size:12px; margin-bottom:4px; }
-  table.pl { width:100%; border-collapse:collapse; font-size:12px; }
+  .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:15.5px; }
+  .cmp-meta { color:#5a6472; font-size:15px; margin-bottom:4px; }
+  table.pl { width:100%; border-collapse:collapse; font-size:15px; }
   table.pl th, table.pl td { padding:2px 3px; border-bottom:1px solid #d6dde6; }
-  table.pl thead th { background:#f3faea; color:#557f25; text-align:right; white-space:nowrap; font-size:11.5px; }
+  table.pl thead th { background:#f3faea; color:#557f25; text-align:right; white-space:nowrap; font-size:15px; }
   table.pl thead th:first-child { text-align:left; }
   table.pl thead th.grp { text-align:center; border-bottom:1px solid #6fae2b; }
   table.pl td.name { text-align:left; white-space:nowrap; }
   table.pl td.amt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; width:auto; padding-left:3px; }
-  table.pl td.pct { text-align:right; color:#5a6472; font-size:11px; white-space:nowrap; }
+  table.pl td.pct { text-align:right; color:#5a6472; font-size:15px; white-space:nowrap; }
   table.pl tr.subtotal td { font-weight:700; background:#fafbfd; }
   table.pl tr.net td { font-weight:800; border-top:1.5px solid #557f25; color:#557f25; background:#f3faea; }
   table.pl td.neg, table.pl td.down { color:#c0392b; }
