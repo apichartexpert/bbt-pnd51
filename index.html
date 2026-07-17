@@ -2044,17 +2044,18 @@ function makePrintDoc(autoPrint) {
   // ล็อกความกว้าง body = หน้ากระดาษจริง เพื่อให้ตัวอย่างบนจอกับตอนพิมพ์จัดวางตรงกัน
   const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 0.1in; }`
     + ` body { width:${usableW}px; margin:0 auto; }`;
-  // ย่อเนื้อหาให้พอดี 1 หน้าเสมอ (ใช้ zoom เพื่อให้การแบ่งหน้าเห็นขนาดที่ย่อแล้ว)
-  // ถ้าตารางเปรียบเทียบกว้างเกินช่อง 75% → ขยายผืนเอกสารให้ช่อง 75% พอดีตาราง แล้วค่อยย่อทั้งหน้า (สัดส่วน 75/25 คงเดิม ไม่ทับกัน)
-  // วัดทันทีหนึ่งครั้ง แล้ววัดซ้ำหลังจัดวางนิ่ง (บางสภาพแวดล้อมวัดครั้งแรกได้ค่าผิด ทำให้ย่อเล็กเกินจริง)
+  // ย่อเนื้อหาให้พอดี 1 หน้าเสมอ — ผืนเอกสาร (body) ล็อกเท่าหน้ากระดาษตลอด ห้ามขยาย
+  // zoom แบบมาตรฐานของเบราว์เซอร์: การย่อ = พื้นที่จัดวางภายในกว้างขึ้นในกรอบเท่าเดิม
+  // จึงคำนวณอัตราย่อจาก "ความกว้างที่ช่องซ้าย 73% ยังขาดอยู่" (วัดที่ช่อง ไม่ใช่ที่ตาราง —
+  // ตาราง HTML ขยายตัวเองได้เลยไม่เคยรายงานว่าล้น) แล้วตรวจความสูงที่เห็นจริงหลังย่อซ้ำอีกชั้น
   const fit = `var w=document.getElementById('printwrap');`
     + `function fitPage(){w.style.zoom='';`
-    + `document.body.style.width='${usableW}px';`
-    + `var t=document.querySelector('.cols .col-l table.pl');`
-    + `if(t&&t.scrollWidth>t.clientWidth){`
-    + `document.body.style.width=(${usableW}+Math.ceil((t.scrollWidth-t.clientWidth)/0.73)+8)+'px';}`
-    + `var s=Math.min(1, ${usableH}/w.scrollHeight, ${usableW}/w.scrollWidth);`
-    + `if(s<1){w.style.zoom=s;}}`
+    + `var L=document.querySelector('.cols .col-l');`
+    + `var need=${usableW}+(L?Math.max(0,Math.ceil((L.scrollWidth-L.clientWidth)/0.73)+8):0);`
+    + `var s=Math.min(1, ${usableW}/need, ${usableH}/w.scrollHeight);`
+    + `if(s<1){w.style.zoom=s;}`
+    + `var vh=w.getBoundingClientRect().height;`
+    + `if(vh>${usableH}){s=s*${usableH}/vh*0.995;w.style.zoom=s;}}`
     + `fitPage();setTimeout(fitPage,120);`;
   const printCall = autoPrint ? `setTimeout(function(){try{window.focus();window.print();}catch(e){}},350);` : '';
   const auto = '<scr' + 'ipt>window.onload=function(){' + fit + printCall + '};</scr' + 'ipt>';
