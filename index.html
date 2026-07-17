@@ -1265,13 +1265,13 @@ function applyImportedData(data) {
       if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
       if (!Array.isArray(ic.history)) ic.history = [];
       if (ic.entityType !== 'general' && ic.entityType !== 'sme') ic.entityType = 'sme';   // ไฟล์ไม่มีค่านี้ → ค่าปกติ SME
-      // กันข้อมูลซ้ำ: บริษัทเดียวกัน = เลขผู้เสียภาษี 13 หลักตรงกัน → อัปเดตทับของเดิมแทนการเพิ่มใหม่
-      // (คงรหัสภายในของบริษัทเดิมไว้ เพราะผูกกับระบบกลางและเอกสารแนบ)
+      // กันข้อมูลซ้ำ: รายการเดียวกัน = เลขผู้เสียภาษี 13 หลัก "และ" รอบปี พ.ศ. ตรงกันทั้งคู่ → อัปเดตทับของเดิม
+      // (บริษัทเดิมแต่คนละรอบปี = แยกรายการ) · คงรหัสภายในของรายการเดิมไว้ เพราะผูกกับระบบกลางและเอกสารแนบ
       const normTax = t => String(t || '').replace(/\D/g, '');
       let idx = db.companies.findIndex(x => x.id === ic.id);
       const icTax = normTax(ic.taxId);
       if (idx < 0 && icTax.length === 13) {
-        idx = db.companies.findIndex(x => normTax(x.taxId) === icTax);
+        idx = db.companies.findIndex(x => normTax(x.taxId) === icTax && String(x.year || '') === String(ic.year || ''));
         if (idx >= 0) ic.id = db.companies[idx].id;
       }
       // นำเข้าไฟล์ที่มีบริษัทที่เคยลบ = ตั้งใจเอากลับมา → ยกเลิกสถานะลบ
