@@ -484,6 +484,11 @@
   <!-- ===== บริษัท + อัตราภาษี ===== -->
   <div class="card screen-only wizard-page" data-step="1">
     <h2><span class="step">1</span> เลือกบริษัท / อัตราภาษี</h2>
+    <div class="field" style="margin-bottom:10px">
+      <label>🔍 ค้นหาบริษัท <span class="hint">— พิมพ์บางส่วนของชื่อ (ไม่ต้องพิมพ์คำว่า บริษัท/ห้างหุ้นส่วนจำกัด/จำกัด) หรือ Job Code</span></label>
+      <input type="text" id="companySearch" placeholder="เช่น คอนสแตนท์ หรือ CEST" autocomplete="off">
+      <div id="companySearchResults"></div>
+    </div>
     <div class="company-bar">
       <div class="field">
         <label>บริษัทที่บันทึกไว้</label>
@@ -1013,6 +1018,44 @@ $('btnDeleteCompany').addEventListener('click', () => {
   db.activeId = db.companies[0].id;
   saveDB(); renderCompanySelect(); loadCompanyToForm();
 });
+// ---- ค้นหาบริษัท: เทียบชื่อแบบตัดคำนำหน้า/ต่อท้ายนิติบุคคลทิ้ง (บริษัท/หจก./จำกัด ฯลฯ) หรือเทียบ Job Code ----
+function companySearchKey(s) {
+  return String(s || '')
+    .replace(/บริษัท|ห้างหุ้นส่วนจำกัด|ห้างหุ้นส่วนสามัญนิติบุคคล|ห้างหุ้นส่วนสามัญ|หจก\.?|บจก\.?|บมจ\.?|จำกัด\s*\(มหาชน\)|จำกัด|\(มหาชน\)/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+function renderCompanySearch() {
+  const q = $('companySearch').value.trim();
+  const wrap = $('companySearchResults');
+  if (!q) { wrap.innerHTML = ''; return; }
+  const nameKey = companySearchKey(q);
+  const codeKey = q.replace(/\s+/g, '').toLowerCase();
+  const hits = db.companies.filter(c =>
+    (nameKey && companySearchKey(c.name).includes(nameKey))
+    || (codeKey && String(c.jobCode || '').replace(/\s+/g, '').toLowerCase().includes(codeKey))
+  ).slice(0, 8);
+  if (!hits.length) { wrap.innerHTML = '<div class="hint" style="padding:6px 2px">ไม่พบบริษัทที่ตรงกับคำค้น</div>'; return; }
+  wrap.innerHTML = hits.map(c => {
+    const st = WF_STATUS[ensureWorkflow(c).status] || WF_STATUS.draft;
+    return `<div onclick="pickCompany('${c.id}')" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 10px; border:1px solid var(--border); border-radius:10px; margin-top:6px; cursor:pointer; background:var(--bg)">
+      <span style="flex:1; min-width:160px"><b>${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')}</b> <span class="hint">รอบปี ${c.year || '-'}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>
+      <span class="wf-badge ${st.cls}" style="font-size:.72rem; padding:2px 10px">${st.label}</span>
+    </div>`;
+  }).join('');
+}
+window.pickCompany = function (id) {
+  if (!db.companies.some(c => c.id === id)) return;
+  db.activeId = id;
+  saveDB();
+  renderCompanySelect();
+  loadCompanyToForm();
+  $('companySearch').value = '';
+  $('companySearchResults').innerHTML = '';
+  toast('เลือกบริษัท: ' + (activeCompany().name || '(ยังไม่ตั้งชื่อบริษัท)'));
+};
+$('companySearch').addEventListener('input', renderCompanySearch);
+
 ['coName', 'coTaxId', 'coYear', 'coJobCode', 'coYearEnd', 'coPreparer', 'coReviewer', 'coApprover']
   .forEach(id => $(id).addEventListener('change', () => { saveCompanyFromForm(); renderLossTable(); }));
 ['inPYAddBack', 'inPYExempt', 'inPYLossUsed', 'inPYCit', 'inPYWht', 'inPYPayable']
