@@ -1669,9 +1669,12 @@ function calculate() {
   // ---- waterfall ทางภาษี ----
   const taxableBeforeLoss = profit + addBack - exempt;
   const availableLoss = lossAvailable();
-  // ใช้ขาดทุนสะสมได้ไม่เกิน (ก) จำนวนที่มี (ข) กำไรที่เป็นบวก
-  const lossUsedInput = parseNum($('inLossUsed').value);
+  // ขาดทุนสะสมยกมา (ไม่เกิน 5 รอบบัญชี): ช่อง "ที่นำมาใช้" เว้นว่าง = หักให้อัตโนมัติเต็มจำนวนที่ใช้ได้
+  // กรอกเอง (รวมกรอก 0) = ใช้ตามที่กรอก · ทุกกรณีไม่เกิน (ก) ยอดที่มี (ข) กำไรที่เป็นบวก
+  const lossFieldBlank = $('inLossUsed').value.trim() === '';
+  const lossUsedInput = lossFieldBlank ? availableLoss : parseNum($('inLossUsed').value);
   const lossUsed = Math.max(0, Math.min(lossUsedInput, availableLoss, Math.max(taxableBeforeLoss, 0)));
+  const lossAuto = lossFieldBlank && lossUsed > 0;
   const taxableProfit = taxableBeforeLoss - lossUsed;
 
   const half = Math.max(taxableProfit, 0) / 2;
@@ -1695,7 +1698,7 @@ function calculate() {
 
   lastResult = {
     company: { ...c }, revenue, expense, profit, addBack, exempt,
-    taxableBeforeLoss, availableLoss, lossUsed, taxableProfit,
+    taxableBeforeLoss, availableLoss, lossUsed, lossAuto, taxableProfit,
     lastYear, lastYearBlank, wht, half, tax, brackets, netPay,
     entityType: c.entityType, date: new Date().toISOString()
   };
@@ -1720,7 +1723,7 @@ function renderResult() {
       `${fmt(r.profit)} + ${fmt(r.addBack)} − ${fmt(r.exempt)}`,
       fmt(r.taxableBeforeLoss));
   }
-  if (r.lossUsed) rows += tr3('หัก ขาดทุนสะสมยกมาที่นำมาใช้', '', '(' + fmt(r.lossUsed) + ')', 'sub');
+  if (r.lossUsed) rows += tr3('หัก ขาดทุนสะสมยกมาที่นำมาใช้', r.lossAuto ? 'หักให้อัตโนมัติจากตารางขาดทุนสะสม (ไม่เกินกำไรที่เป็นบวก)' : '', '(' + fmt(r.lossUsed) + ')', 'sub');
   rows += tr3('<b>กำไร(ขาดทุน)สุทธิเพื่อเสียภาษี (ทั้งปี)</b>',
     r.lossUsed ? `${fmt(r.taxableBeforeLoss)} − ${fmt(r.lossUsed)}` : '',
     fmt(r.taxableProfit));
@@ -1851,8 +1854,8 @@ function renderLossTable() {
 function updateLossHint() {
   const avail = lossAvailable();
   $('lossUsedHint').textContent = avail > 0
-    ? `ใช้ได้ไม่เกิน ${fmt(avail)} บาท และไม่เกินกำไรที่เป็นบวก`
-    : 'ยังไม่มีขาดทุนสะสมยกมา';
+    ? `มียอดใช้ได้ ${fmt(avail)} บาท — เว้นว่างไว้ ระบบจะหักให้อัตโนมัติ (ไม่เกินกำไรที่เป็นบวก) · อยากใช้บางส่วนให้พิมพ์จำนวนเอง · ไม่ใช้ให้พิมพ์ 0`
+    : 'ยังไม่มีขาดทุนสะสมยกมา — กรอกในตารางด้านบนก่อน แล้วระบบจะหักให้อัตโนมัติตอนคำนวณ';
 }
 
 /* ---------- สรุปแบบ ภ.ง.ด.51 (front page) ---------- */
