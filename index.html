@@ -937,7 +937,9 @@ function loadCompanyToForm() {
   $('coJobCode').value = c.jobCode || '';
   $('coYearEnd').value = c.yearEnd || '';
   populateAssignSelects();
-  document.querySelector(`input[name="entityType"][value="${c.entityType}"]`).checked = true;
+  const etRadio = document.querySelector(`input[name="entityType"][value="${c.entityType}"]`)
+    || document.querySelector('input[name="entityType"][value="sme"]');   // ข้อมูลเก่า/นำเข้าไม่มีค่า → SME
+  etRadio.checked = true;
   syncRadioStyle();
   $('historyCompanyName').textContent = c.name ? '— ' + c.name : '';
   const py = ensurePriorYearTax(c);
@@ -1262,12 +1264,21 @@ function applyImportedData(data) {
       if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
       if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
       if (!Array.isArray(ic.history)) ic.history = [];
+      if (ic.entityType !== 'general' && ic.entityType !== 'sme') ic.entityType = 'sme';   // ไฟล์ไม่มีค่านี้ → ค่าปกติ SME
+      // กันข้อมูลซ้ำ: บริษัทเดียวกัน = เลขผู้เสียภาษี 13 หลักตรงกัน → อัปเดตทับของเดิมแทนการเพิ่มใหม่
+      // (คงรหัสภายในของบริษัทเดิมไว้ เพราะผูกกับระบบกลางและเอกสารแนบ)
+      const normTax = t => String(t || '').replace(/\D/g, '');
+      let idx = db.companies.findIndex(x => x.id === ic.id);
+      const icTax = normTax(ic.taxId);
+      if (idx < 0 && icTax.length === 13) {
+        idx = db.companies.findIndex(x => normTax(x.taxId) === icTax);
+        if (idx >= 0) ic.id = db.companies[idx].id;
+      }
       // นำเข้าไฟล์ที่มีบริษัทที่เคยลบ = ตั้งใจเอากลับมา → ยกเลิกสถานะลบ
       if (db.deletedIds.includes(ic.id)) {
         db.deletedIds = db.deletedIds.filter(x => x !== ic.id);
         delete pushedJson['_del_' + ic.id];
       }
-      const idx = db.companies.findIndex(x => x.id === ic.id);
       if (idx >= 0) { db.companies[idx] = ic; updated++; }
       else { db.companies.push(ic); added++; }
       empAdded += mergeEmp(ic.preparer) + mergeEmp(ic.reviewer) + mergeEmp(ic.approver);
