@@ -1142,19 +1142,28 @@ function stamp() {
 // สร้างสมุด Excel: ชีต Companies (คอลัมน์อ่านง่าย + คอลัมน์ _json เก็บข้อมูลเต็มสำหรับนำเข้ากลับแบบไม่ตกหล่น) + ชีต Employees
 function companiesToWorkbook(companies, employees) {
   const wb = XLSX.utils.book_new();
-  const rows = (companies || []).map(c => ({
-    'ชื่อบริษัท': c.name || '',
-    'เลขผู้เสียภาษี': c.taxId || '',
-    'รอบปี พ.ศ.': c.year || '',
-    'Job Code': c.jobCode || '',
-    'วันสิ้นรอบบัญชี': c.yearEnd || '',
-    'ประเภท/อัตราภาษี': c.entityType === 'general' ? 'บริษัททั่วไป 20%' : 'SME ขั้นบันได',
-    'ผู้จัดทำ': c.preparer || '',
-    'ผู้ตรวจสอบ': c.reviewer || '',
-    'ผู้อนุมัติ': c.approver || '',
-    'สถานะงาน': (WF_STATUS[(c.workflow || {}).status] || WF_STATUS.draft).label,
-    '_json': JSON.stringify(c)
-  }));
+  const rows = (companies || []).map(c => {
+    const row = {
+      'ชื่อบริษัท': c.name || '',
+      'เลขผู้เสียภาษี': c.taxId || '',
+      'รอบปี พ.ศ.': c.year || '',
+      'Job Code': c.jobCode || '',
+      'วันสิ้นรอบบัญชี': c.yearEnd || '',
+      'ประเภท/อัตราภาษี': c.entityType === 'general' ? 'บริษัททั่วไป 20%' : 'SME ขั้นบันได',
+      'ผู้จัดทำ': c.preparer || '',
+      'ผู้ตรวจสอบ': c.reviewer || '',
+      'ผู้อนุมัติ': c.approver || '',
+      'สถานะงาน': (WF_STATUS[(c.workflow || {}).status] || WF_STATUS.draft).label
+    };
+    // Excel จำกัด ~32,767 ตัวอักษร/ช่อง — ข้อมูลเต็ม (มีงบทดลองฝัง) ยาวกว่านั้นได้
+    // จึงหั่นเก็บทีละ 30,000 ในคอลัมน์ _json, _json2, _json3, ... แล้วต่อกลับตอนนำเข้า
+    const full = JSON.stringify(c);
+    const CHUNK = 30000;
+    for (let i = 0, n = 1; i < full.length || n === 1; i += CHUNK, n++) {
+      row[n === 1 ? '_json' : '_json' + n] = full.slice(i, i + CHUNK);
+    }
+    return row;
+  });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'ชื่อบริษัท': '' }]), 'Companies');
   const erows = (employees || []).map(e => ({ 'ชื่อ': e.name || '', 'ตำแหน่ง': e.role || '', 'บทบาท': e.rtype || '' }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(erows.length ? erows : [{ 'ชื่อ': '' }]), 'Employees');
@@ -1228,7 +1237,10 @@ function workbookToData(wb) {
   if (cs) {
     XLSX.utils.sheet_to_json(cs, { defval: '' }).forEach(r => {
       if (r._json) {
-        try { data.companies.push(JSON.parse(r._json)); return; } catch (e) {}
+        // ข้อมูลเต็มอาจถูกหั่นเก็บหลายคอลัมน์ (_json, _json2, ...) — ต่อกลับก่อนอ่าน
+        let full = String(r._json);
+        for (let n = 2; r['_json' + n]; n++) full += String(r['_json' + n]);
+        try { data.companies.push(JSON.parse(full)); return; } catch (e) {}
       }
       // ไฟล์ที่ไม่มี _json (เช่น พิมพ์เองใน Excel) — สร้างบริษัทจากคอลัมน์ที่อ่านได้
       if (r['ชื่อบริษัท']) {
