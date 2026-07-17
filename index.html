@@ -357,7 +357,7 @@
   @media print {
     body { background: #fff; padding: 0; }
     .screen-only { display: none !important; }
-    #printReport { display: block; font-size: 16px; }
+    #printReport { display: block; font-size: 15px; }
     #printReport h1 { font-size: 22px; text-align: center; margin-bottom: 2px; }
     #printReport .sub-title { text-align: center; color: #444; margin-bottom: 12px; font-size: 15px; }
     #printReport .hdr { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; border: 1px solid #999; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 15px; }
@@ -377,9 +377,10 @@
     #printReport tr.total td { border-top: 1.5px solid #000; font-weight: 700; padding-top: 8px; }
     #printReport .warn-print { border: 1px solid #b7791f; background: #fdf3e0; border-radius: 6px; padding: 10px 14px; margin-top: 10px; font-size: 15px; }
     #printReport .footer { margin-top: 24px; font-size: 15px; color: #666; }
-    #printReport .sign { margin-top: 40px; display: flex; justify-content: flex-end; gap: 16px; }
+    #printReport .sign { margin-top: 24px; display: flex; justify-content: flex-end; gap: 16px; }
     #printReport .sign .line { flex: 1; max-width: 240px; text-align: center; font-size: 15px; }
-    #printReport .sign .line hr { border: none; border-top: 1px dotted #333; margin-bottom: 4px; margin-top: 36px; }
+    #printReport .sign .line .sig-top { min-height: 46px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+    #printReport .sign .line hr { border: none; border-top: 1px dotted #333; margin: 4px 0; }
   }
 </style>
 </head>
@@ -1966,9 +1967,9 @@ window.loadHistory = function (i) {
 // CSS สำหรับเอกสารพิมพ์ (ใช้ในหน้าต่างพิมพ์แยก เพื่อให้พิมพ์ได้ทุกสภาพแวดล้อม)
 const PRINT_CSS = `
   html,body { margin:0; padding:0; }
-  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; font-size:16px; line-height:1.35; }
-  #printwrap { padding:10px 12px; transform-origin: top left; }
-  h1 { font-size:22px; text-align:center; margin:0 0 2px; }
+  body { font-family: -apple-system,"Segoe UI","Leelawadee UI","Thonburi","Sukhumvit Set",sans-serif; color:#22262c; font-size:15px; line-height:1.35; }
+  #printwrap { padding:6px 8px; transform-origin: top left; }
+  h1 { font-size:20px; text-align:center; margin:0 0 2px; }
   .sub-title { text-align:center; color:#444; margin-bottom:6px; font-size:15px; }
   /* หัวเอกสาร 3 กลุ่ม: ซ้าย=บริษัท · กลาง=รอบบัญชี/อัตราภาษี · ขวา=สถานะ/วันที่ */
   .hdr { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; border:1px solid #999; border-radius:6px; padding:7px 12px; margin-bottom:7px; font-size:15px; }
@@ -1978,12 +1979,11 @@ const PRINT_CSS = `
   .hdr .lbl { color:#666; font-size:15px; }
   .box { border:1px solid #999; border-radius:6px; padding:7px 10px; margin-bottom:7px; }
   .box.main { max-width:680px; margin-left:auto; margin-right:auto; }
-  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ (กว้าง) · ขวา = ประมาณการ/คำนวณภาษี (แคบ)
-     ซ้ายกว้างเท่าตารางจริง (ห้ามบีบ ไม่งั้นตารางล้นไปทับคอลัมน์ขวา) — ถ้ารวมกันเกินหน้ากระดาษ
-     สคริปต์ย่อทั้งหน้า (zoom fit) จะย่อให้พอดีเอง */
+  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ 75% ของหน้า · ขวา = คำนวณภาษี 25%
+     ถ้าตารางกว้างกว่าช่อง 75% สคริปต์จะขยายผืนเอกสารให้ 75% พอดีตาราง แล้วย่อทั้งหน้าลงพอดีกระดาษ (ไม่ทับกัน) */
   .cols { display:flex; gap:8px; align-items:flex-start; }
-  .cols .col-l { flex:0 0 auto; max-width:none; }
-  .cols .col-r { flex:1 1 auto; min-width:340px; }
+  .cols .col-l { flex:0 0 75%; max-width:75%; min-width:0; }
+  .cols .col-r { flex:1 1 auto; min-width:0; }
   table { width:100%; border-collapse:collapse; }
   td { padding:2.5px 3px; vertical-align:top; }
   td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:8px; }
@@ -1992,7 +1992,9 @@ const PRINT_CSS = `
   .footer { margin-top:10px; font-size:15px; color:#666; }
   .sign { margin-top:14px; display:flex; justify-content:flex-end; gap:16px; }
   .sign .line { flex:1; max-width:240px; text-align:center; font-size:15px; }
-  .sign .line hr { border:none; border-top:1px dotted #333; margin-bottom:4px; margin-top:24px; }
+  /* ชื่อ+สถานะเซ็นอยู่เหนือเส้น (เว้นที่ให้เซ็นจริง) · ใต้เส้นเป็นตำแหน่ง */
+  .sign .line .sig-top { min-height:46px; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:1px; }
+  .sign .line hr { border:none; border-top:1px dotted #333; margin:4px 0; }
   .cmp-title { font-weight:700; color:#557f25; margin-bottom:3px; font-size:15.5px; }
   .cmp-meta { color:#5a6472; font-size:15px; margin-bottom:4px; }
   table.pl { width:100%; border-collapse:collapse; font-size:15px; }
@@ -2013,16 +2015,21 @@ function makePrintDoc(autoPrint) {
   const inner = $('printReport').innerHTML;
   // ถ้ามีตารางเปรียบเทียบ (กว้าง) ให้พิมพ์แนวนอนเพื่อไม่ให้ตกขอบ
   const wide = !!(estimatePeriod() && $('plTable').innerHTML.trim());
-  // พื้นที่ใช้งานจริงของ A4 หัก margin 7mm (หน่วย px ที่ ~96dpi)
-  const usableW = wide ? 1070 : 741;
-  const usableH = wide ? 741 : 1070;
+  // พื้นที่ใช้งานจริงของ A4 หักขอบกระดาษ 0.1 นิ้วทุกด้าน (หน่วย px ที่ ~96dpi)
+  const usableW = wide ? 1103 : 774;
+  const usableH = wide ? 774 : 1103;
   // ล็อกความกว้าง body = หน้ากระดาษจริง เพื่อให้ตัวอย่างบนจอกับตอนพิมพ์จัดวางตรงกัน
-  const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 7mm; }`
+  const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 0.1in; }`
     + ` body { width:${usableW}px; margin:0 auto; }`;
   // ย่อเนื้อหาให้พอดี 1 หน้าเสมอ (ใช้ zoom เพื่อให้การแบ่งหน้าเห็นขนาดที่ย่อแล้ว)
+  // ถ้าตารางเปรียบเทียบกว้างเกินช่อง 75% → ขยายผืนเอกสารให้ช่อง 75% พอดีตาราง แล้วค่อยย่อทั้งหน้า (สัดส่วน 75/25 คงเดิม ไม่ทับกัน)
   // วัดทันทีหนึ่งครั้ง แล้ววัดซ้ำหลังจัดวางนิ่ง (บางสภาพแวดล้อมวัดครั้งแรกได้ค่าผิด ทำให้ย่อเล็กเกินจริง)
   const fit = `var w=document.getElementById('printwrap');`
     + `function fitPage(){w.style.zoom='';`
+    + `document.body.style.width='${usableW}px';`
+    + `var t=document.querySelector('.cols .col-l table.pl');`
+    + `if(t&&t.scrollWidth>t.clientWidth){`
+    + `document.body.style.width=(${usableW}+Math.ceil((t.scrollWidth-t.clientWidth)/0.75)+8)+'px';}`
     + `var s=Math.min(1, ${usableH}/w.scrollHeight, ${usableW}/w.scrollWidth);`
     + `if(s<1){w.style.zoom=s;}}`
     + `fitPage();setTimeout(fitPage,120);`;
@@ -2188,10 +2195,13 @@ function buildPrintReport() {
     </div>
   `;
 }
+// ชื่อผู้รับผิดชอบ + สถานะเซ็น อยู่ "เหนือ" เส้นประ · ใต้เส้นเป็นตำแหน่ง (ตามแบบฟอร์มเอกสาร)
 function printSign(roleKey, roleLabel, assignedName, wf) {
   const s = signoffFor(wf, roleKey);
-  if (s) return `<div class="line"><hr><b>${escapeHtml(s.name)}</b><br>${roleLabel}<br><span style="color:#1e7d43">✓ เซ็นแล้ว ${fmtDateTime(s.at)}</span></div>`;
-  return `<div class="line"><hr>${roleLabel}<br>${escapeHtml(assignedName || '')}</div>`;
+  const top = s
+    ? `<b>${escapeHtml(s.name)}</b><span style="color:#1e7d43">✓ เซ็นแล้ว ${fmtDateTime(s.at)}</span>`
+    : (assignedName ? escapeHtml(assignedName) : '&nbsp;');
+  return `<div class="line"><div class="sig-top">${top}</div><hr>${roleLabel}</div>`;
 }
 
 /* ---------- นำเข้างบทดลอง (Trial Balance) ---------- */
