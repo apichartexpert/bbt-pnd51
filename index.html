@@ -367,10 +367,11 @@
     #printReport .hdr .lbl { color: #666; font-size: 15px; }
     #printReport .box { border: 1px solid #999; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
     #printReport .box.main { max-width: 680px; margin-left: auto; margin-right: auto; }
-    /* พิมพ์ตรงจากหน้าหลัก (ไม่มีตัวย่อหน้าอัตโนมัติ): ถ้าตารางเปรียบเทียบกว้างเกิน ให้คอลัมน์ขวาตกลงมาต่อด้านล่างแทนการทับกัน */
-    #printReport .cols { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
-    #printReport .cols .col-l { flex: 0 0 auto; max-width: 100%; }
-    #printReport .cols .col-r { flex: 1 1 340px; min-width: 340px; }
+    /* พิมพ์ตรงจากหน้าหลัก (ไม่มีตัวย่อหน้าอัตโนมัติ): ผังบน-ล่าง — เปรียบเทียบเต็มกว้าง แถวล่างห่อบรรทัดได้ */
+    #printReport .cmpfull { width: 100%; }
+    #printReport .brow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    #printReport .brow .b-sign { flex: 1 1 340px; min-width: 0; }
+    #printReport .brow .b-calc { flex: 1 1 340px; max-width: 48%; min-width: 300px; }
     #printReport table { width: 100%; border-collapse: collapse; }
     #printReport td { padding: 4px 3px; vertical-align: top; }
     #printReport td.amt { text-align: right; white-space: nowrap; }
@@ -2021,11 +2022,13 @@ const PRINT_CSS = `
   .hdr .lbl { color:#666; font-size:15px; }
   .box { border:1px solid #999; border-radius:6px; padding:7px 10px; margin-bottom:7px; }
   .box.main { max-width:680px; margin-left:auto; margin-right:auto; }
-  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ 73% ชิดขอบซ้ายสุด · ขวา = คำนวณภาษี 27% ชิดขอบขวาสุด (ที่กั้นหน้า 0.1")
-     ถ้าตารางกว้างกว่าช่อง 73% สคริปต์จะขยายผืนเอกสารให้ 73% พอดีตาราง แล้วย่อทั้งหน้าลงพอดีกระดาษ (ไม่ทับกัน) */
-  .cols { display:flex; justify-content:space-between; gap:0; align-items:flex-start; }
-  .cols .col-l { flex:0 0 73%; max-width:73%; min-width:0; }
-  .cols .col-r { flex:0 0 27%; max-width:27%; min-width:0; }
+  /* ผังบน-ล่าง (เมื่อมีงบเปรียบเทียบ): เปรียบเทียบเต็มความกว้างอยู่บน ·
+     แถวล่าง = ลายเซ็น+หมายเหตุ (ซ้าย) กับ กล่องคำนวณภาษี (ขวา) — ใช้พื้นที่กระดาษเต็มกว่าแบบสองคอลัมน์ */
+  .cmpfull { width:100%; }
+  .brow { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-top:2px; }
+  .brow .b-sign { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; justify-content:flex-end; }
+  .brow .b-calc { flex:0 0 34%; max-width:34%; min-width:0; }
+  .brow .sign { margin-top:10px; }
   table { width:100%; border-collapse:collapse; }
   td { padding:2.5px 3px; vertical-align:top; }
   td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:8px; }
@@ -2065,12 +2068,12 @@ function makePrintDoc(autoPrint) {
     + ` body { width:${usableW}px; margin:0 auto; }`;
   // ย่อเนื้อหาให้พอดี 1 หน้าเสมอ — ผืนเอกสาร (body) ล็อกเท่าหน้ากระดาษตลอด ห้ามขยาย
   // zoom แบบมาตรฐานของเบราว์เซอร์: การย่อ = พื้นที่จัดวางภายในกว้างขึ้นในกรอบเท่าเดิม
-  // จึงคำนวณอัตราย่อจาก "ความกว้างที่ช่องซ้าย 73% ยังขาดอยู่" (วัดที่ช่อง ไม่ใช่ที่ตาราง —
+  // จึงคำนวณอัตราย่อจาก "ความกว้างที่ตารางเปรียบเทียบล้นออกจากหน้า" (วัดที่กล่อง .cmpfull ไม่ใช่ที่ตาราง —
   // ตาราง HTML ขยายตัวเองได้เลยไม่เคยรายงานว่าล้น) แล้วตรวจความสูงที่เห็นจริงหลังย่อซ้ำอีกชั้น
   const fit = `var w=document.getElementById('printwrap');`
     + `function fitPage(){w.style.zoom='';`
-    + `var L=document.querySelector('.cols .col-l');`
-    + `var need=${usableW}+(L?Math.max(0,Math.ceil((L.scrollWidth-L.clientWidth)/0.73)+8):0);`
+    + `var L=document.querySelector('.cmpfull');`
+    + `var need=${usableW}+(L?Math.max(0,L.scrollWidth-L.clientWidth+4):0);`
     + `var s=Math.min(1, ${usableW}/need, ${usableH}/w.scrollHeight);`
     + `if(s<1){w.style.zoom=s;}`
     + `var vh=w.getBoundingClientRect().height;`
@@ -2223,19 +2226,23 @@ function buildPrintReport() {
         </table>
         ${riskPrint}
       </div>`;
-      // มีงบเปรียบเทียบ → วางคู่กัน: ซ้าย = เปรียบเทียบ · ขวา = ประมาณการ/คำนวณภาษี
+      const footerHtml = `<div class="footer">
+        กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
+      </div>`;
+      const signHtml = `<div class="sign" style="justify-content:space-between">
+        ${printSign('preparer', 'ผู้จัดทำ (Preparer)', c.preparer, wfP)}
+        ${printSign('reviewer', 'ผู้ตรวจสอบ (Reviewer)', c.reviewer, wfP)}
+        ${printSign('approver', 'ผู้อนุมัติ (Approver)', c.approver, wfP)}
+      </div>`;
+      // มีงบเปรียบเทียบ → ผังบน-ล่าง: เปรียบเทียบเต็มความกว้าง · แถวล่าง = ลายเซ็น(ซ้าย) + คำนวณภาษี(ขวา)
       return comparisonBox
-        ? `<div class="cols"><div class="col-l">${comparisonBox}</div><div class="col-r">${calcBox}</div></div>`
-        : calcBox;
+        ? `<div class="cmpfull">${comparisonBox}</div>
+           <div class="brow">
+             <div class="b-sign">${footerHtml}${signHtml}</div>
+             <div class="b-calc">${calcBox}</div>
+           </div>`
+        : calcBox + footerHtml + signHtml;
     })()}
-    <div class="footer">
-      กำหนดยื่น ภ.ง.ด.51 ภายใน 2 เดือนนับแต่วันสุดท้ายของครึ่งแรกของรอบระยะเวลาบัญชี
-    </div>
-    <div class="sign" style="justify-content:space-between">
-      ${printSign('preparer', 'ผู้จัดทำ (Preparer)', c.preparer, wfP)}
-      ${printSign('reviewer', 'ผู้ตรวจสอบ (Reviewer)', c.reviewer, wfP)}
-      ${printSign('approver', 'ผู้อนุมัติ (Approver)', c.approver, wfP)}
-    </div>
   `;
 }
 // ชื่อผู้รับผิดชอบ + สถานะเซ็น อยู่ "เหนือ" เส้นประ · ใต้เส้นเป็นตำแหน่ง (ตามแบบฟอร์มเอกสาร)
