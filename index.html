@@ -367,9 +367,10 @@
     #printReport .hdr .lbl { color: #666; font-size: 15px; }
     #printReport .box { border: 1px solid #999; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
     #printReport .box.main { max-width: 680px; margin-left: auto; margin-right: auto; }
-    #printReport .cols { display: flex; gap: 8px; align-items: flex-start; }
-    #printReport .cols .col-l { flex: 1.8; min-width: 0; }
-    #printReport .cols .col-r { flex: 1; min-width: 0; }
+    /* พิมพ์ตรงจากหน้าหลัก (ไม่มีตัวย่อหน้าอัตโนมัติ): ถ้าตารางเปรียบเทียบกว้างเกิน ให้คอลัมน์ขวาตกลงมาต่อด้านล่างแทนการทับกัน */
+    #printReport .cols { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+    #printReport .cols .col-l { flex: 0 0 auto; max-width: 100%; }
+    #printReport .cols .col-r { flex: 1 1 340px; min-width: 340px; }
     #printReport table { width: 100%; border-collapse: collapse; }
     #printReport td { padding: 4px 3px; vertical-align: top; }
     #printReport td.amt { text-align: right; white-space: nowrap; }
@@ -793,6 +794,14 @@ function parseNum(v) {
   const n = parseFloat(String(v).replace(/,/g, ''));
   return isFinite(n) ? n : 0;
 }
+// ดักข้อผิดพลาดที่ไม่มีใครจับ — แสดงเป็นข้อความแทนการพังเงียบ ๆ (ผู้ใช้จะได้แจ้งอาการได้ถูก)
+window.addEventListener('error', e => {
+  try { toast('เกิดข้อผิดพลาดในโปรแกรม: ' + (e.message || 'ไม่ทราบสาเหตุ')); } catch (_) {}
+});
+window.addEventListener('unhandledrejection', e => {
+  const r = e.reason;
+  try { toast('เกิดข้อผิดพลาด: ' + ((r && (r.message || r.code)) || r || 'ไม่ทราบสาเหตุ')); } catch (_) {}
+});
 // พิมพ์ตัวเลขแล้วใส่ comma อัตโนมัติ
 document.querySelectorAll('input.num').forEach(inp => {
   inp.addEventListener('blur', () => {
@@ -837,7 +846,20 @@ function loadDB() {
   }
   if (!db.companies.some(c => c.id === db.activeId)) db.activeId = db.companies[0].id;
 }
-function saveDB() { safeStore.set(JSON.stringify(db)); cloudSchedulePush(); }
+// ประทับเวลา _syncAt ให้บริษัทที่ "เนื้อหาเปลี่ยนจริง" ณ ตอนบันทึก (ไม่ใช่ตอน push)
+// — ใช้ตัดสินว่าเครื่องไหนมีข้อมูลใหม่กว่าตอนซิงค์ระบบกลาง แก้ปัญหาเครื่องที่ push ทีหลังทับข้อมูลใหม่ด้วยข้อมูลเก่า
+const companyStamp = {};   // id -> เนื้อหาล่าสุดที่รับรู้แล้ว (ไม่รวม _syncAt)
+function companyProbe(c) { return JSON.stringify(c, (k, v) => k === '_syncAt' ? undefined : v); }
+function primeCompanyStamps() { db.companies.forEach(c => { companyStamp[c.id] = companyProbe(c); }); }
+function saveDB() {
+  const now = Date.now();
+  db.companies.forEach(c => {
+    const probe = companyProbe(c);
+    if (companyStamp[c.id] !== probe) { c._syncAt = now; companyStamp[c.id] = probe; }
+  });
+  safeStore.set(JSON.stringify(db));
+  cloudSchedulePush();
+}
 function newCompany() {
   return { id: 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
            name: '', taxId: '', year: new Date().getFullYear() + 543,
@@ -1915,10 +1937,12 @@ const PRINT_CSS = `
   .hdr .lbl { color:#666; font-size:15px; }
   .box { border:1px solid #999; border-radius:6px; padding:7px 10px; margin-bottom:7px; }
   .box.main { max-width:680px; margin-left:auto; margin-right:auto; }
-  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ (กว้าง) · ขวา = ประมาณการ/คำนวณภาษี (แคบ) */
+  /* ผังสองคอลัมน์: ซ้าย = งบเปรียบเทียบ (กว้าง) · ขวา = ประมาณการ/คำนวณภาษี (แคบ)
+     ซ้ายกว้างเท่าตารางจริง (ห้ามบีบ ไม่งั้นตารางล้นไปทับคอลัมน์ขวา) — ถ้ารวมกันเกินหน้ากระดาษ
+     สคริปต์ย่อทั้งหน้า (zoom fit) จะย่อให้พอดีเอง */
   .cols { display:flex; gap:8px; align-items:flex-start; }
-  .cols .col-l { flex:1.8; min-width:0; }
-  .cols .col-r { flex:1; min-width:0; }
+  .cols .col-l { flex:0 0 auto; max-width:none; }
+  .cols .col-r { flex:1 1 auto; min-width:340px; }
   table { width:100%; border-collapse:collapse; }
   td { padding:2.5px 3px; vertical-align:top; }
   td.amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; width:1%; padding-left:8px; }
@@ -1948,14 +1972,19 @@ function makePrintDoc(autoPrint) {
   const inner = $('printReport').innerHTML;
   // ถ้ามีตารางเปรียบเทียบ (กว้าง) ให้พิมพ์แนวนอนเพื่อไม่ให้ตกขอบ
   const wide = !!(estimatePeriod() && $('plTable').innerHTML.trim());
-  const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 7mm; }`;
   // พื้นที่ใช้งานจริงของ A4 หัก margin 7mm (หน่วย px ที่ ~96dpi)
   const usableW = wide ? 1070 : 741;
   const usableH = wide ? 741 : 1070;
+  // ล็อกความกว้าง body = หน้ากระดาษจริง เพื่อให้ตัวอย่างบนจอกับตอนพิมพ์จัดวางตรงกัน
+  const pageCss = `@page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 7mm; }`
+    + ` body { width:${usableW}px; margin:0 auto; }`;
   // ย่อเนื้อหาให้พอดี 1 หน้าเสมอ (ใช้ zoom เพื่อให้การแบ่งหน้าเห็นขนาดที่ย่อแล้ว)
+  // วัดทันทีหนึ่งครั้ง แล้ววัดซ้ำหลังจัดวางนิ่ง (บางสภาพแวดล้อมวัดครั้งแรกได้ค่าผิด ทำให้ย่อเล็กเกินจริง)
   const fit = `var w=document.getElementById('printwrap');`
+    + `function fitPage(){w.style.zoom='';`
     + `var s=Math.min(1, ${usableH}/w.scrollHeight, ${usableW}/w.scrollWidth);`
-    + `if(s<1){w.style.zoom=s;}`;
+    + `if(s<1){w.style.zoom=s;}}`
+    + `fitPage();setTimeout(fitPage,120);`;
   const printCall = autoPrint ? `setTimeout(function(){try{window.focus();window.print();}catch(e){}},350);` : '';
   const auto = '<scr' + 'ipt>window.onload=function(){' + fit + printCall + '};</scr' + 'ipt>';
   return '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">'
@@ -2620,8 +2649,11 @@ async function startSync() {
       const rc = d.data();
       if (!rc || !rc.id) return;
       const idx = db.companies.findIndex(x => x.id === rc.id);
-      if (idx >= 0) { if ((rc._syncAt || 0) >= (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; }
+      if (idx >= 0) { if ((rc._syncAt || 0) >= (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; else return; }
       else db.companies.push(rc);
+      // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
+      companyStamp[rc.id] = companyProbe(rc);
+      pushedJson[rc.id] = JSON.stringify(rc);
     });
     // ฐานพนักงาน = บัญชีผู้ใช้ระบบกลางที่อนุมัติแล้ว (ชื่อ + บทบาท Staff/Manager/Partner)
     await loadEmployeesFromUsers();
@@ -2642,8 +2674,11 @@ async function startSync() {
         const rc = ch.doc.data();
         if (!rc || !rc.id) return;
         const idx = db.companies.findIndex(x => x.id === rc.id);
-        if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; } }
+        if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; } else return; }
         else { db.companies.push(rc); changed = true; }
+        // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
+        companyStamp[rc.id] = companyProbe(rc);
+        pushedJson[rc.id] = JSON.stringify(rc);
       });
       applyingRemote = false;
       if (changed) {
@@ -2658,21 +2693,35 @@ async function startSync() {
   renderCloudUI();
 }
 function stopSync() { if (unsubCompanies) { unsubCompanies(); unsubCompanies = null; } }
+// จำเนื้อหาที่ push ขึ้นระบบกลางไปแล้ว — จะ push เฉพาะรายการที่เปลี่ยนจากครั้งก่อน
+// (เดิม push ทุกบริษัทพร้อมประทับเวลาใหม่ทุกครั้ง ทำให้เครื่องที่ push ทีหลังทับข้อมูลใหม่ของเครื่องอื่นด้วยข้อมูลเก่า)
+const pushedJson = {};
 async function cloudPushNow() {
   if (!fbDb || !cloudUser) return;
   cloudPushing = true;
+  const sentIds = [];
   try {
-    const now = Date.now();
     const batch = fbDb.batch();
     db.companies.forEach(c => {
-      c._syncAt = now;
-      batch.set(fbDb.collection('companies').doc(c.id), JSON.parse(JSON.stringify(c)));
+      const j = JSON.stringify(c);
+      if (pushedJson[c.id] === j) return;   // ไม่มีอะไรเปลี่ยน ไม่ต้องส่งซ้ำ
+      batch.set(fbDb.collection('companies').doc(c.id), JSON.parse(j));
+      pushedJson[c.id] = j;
+      sentIds.push(c.id);
     });
-    batch.set(fbDb.collection('meta').doc('employees'), { list: JSON.parse(JSON.stringify(db.employees)), _syncAt: now });
-    await batch.commit();
-    safeStore.set(JSON.stringify(db));
-    $('cloudInfo').textContent = 'ซิงค์ล่าสุด ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    const ej = JSON.stringify(db.employees);
+    if (pushedJson['_employees'] !== ej) {
+      batch.set(fbDb.collection('meta').doc('employees'), { list: JSON.parse(ej), _syncAt: Date.now() });
+      pushedJson['_employees'] = ej;
+      sentIds.push('_employees');
+    }
+    if (sentIds.length) {
+      await batch.commit();
+      safeStore.set(JSON.stringify(db));
+      $('cloudInfo').textContent = 'ซิงค์ล่าสุด ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    }
   } catch (e) {
+    sentIds.forEach(id => { delete pushedJson[id]; });   // ส่งไม่สำเร็จ — รอบหน้าลองส่งใหม่
     toast('บันทึกขึ้นระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
   }
   cloudPushing = false;
@@ -3023,6 +3072,7 @@ document.addEventListener('change', e => { if (e.target.closest('.wizard-page'))
 
 /* ---------- init ---------- */
 loadDB();
+primeCompanyStamps();   // จำเนื้อหาปัจจุบันไว้เป็นฐาน — saveDB จะประทับเวลาเฉพาะบริษัทที่เปลี่ยนจริงหลังจากนี้
 renderCompanySelect();
 loadCompanyToForm();
 renderEmployeeList();
