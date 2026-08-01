@@ -3506,6 +3506,10 @@ window.goToStep = function (n) {
   if (n < 1 || n > WIZARD_LAST) return;
   currentStep = n;
   currentView = 'work';   // เปิดขั้นตอน = เข้าโหมดหน้าทำงานเสมอ (เช่นกด "เปิดงาน" จาก Dashboard)
+  // เข้าขั้น 5/7 = สร้างรายชื่อผู้ดำเนินการ/ฟอร์มยื่นแบบใหม่เสมอ — พนักงานหรือผู้รับผิดชอบที่เพิ่งเพิ่ม/เปลี่ยน
+  // ในขั้น 1 จะได้โผล่ใน dropdown ทันที (เดิมค้างเป็นรายชื่อ ณ ตอนโหลดหน้า จนกว่าจะสลับบริษัท/รีเฟรช)
+  if (n === 5) renderWorkflow();
+  else if (n === 7) renderFilingStep();
   renderWizard();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
