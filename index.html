@@ -894,6 +894,61 @@ const safeStore = (() => {
   }
 })();
 
+/* ---------- tombstone: บริษัทที่ถูกลบ ----------
+   เก็บเป็น db.tombs = { <id>: { del: เวลาที่ลบ, undel: เวลาที่เอากลับมา } }
+   สถานะ "ถูกลบอยู่" = del ใหม่กว่า undel · การรวมกับเครื่องอื่นใช้ "ค่ามากสุดของแต่ละช่อง"
+   จึงรวมกี่รอบ สลับลำดับอย่างไร ผลก็เท่ากัน และการเอากลับมาทีหลังชนะการลบเสมอ
+   (เดิมเก็บเป็นรายการ id แล้วรวมแบบ union อย่างเดียว — บริษัทที่นำกลับมาใหม่จึงถูกเครื่องอื่นลบซ้ำ) */
+const TOMB_KEEP_MS = 180 * 24 * 60 * 60 * 1000;   // เก็บประวัติการลบไว้ 180 วันก็พอ ไม่ให้โตไม่สิ้นสุด
+function migrateTombs() {
+  if (!db.tombs || typeof db.tombs !== 'object' || Array.isArray(db.tombs)) db.tombs = {};
+  // ข้อมูลรุ่นเก่าเก็บเป็น array ของ id — แปลงเป็นรูปแบบใหม่ด้วยเวลา 1 (เก่าที่สุด) เพื่อให้การเอากลับมาชนะเสมอ
+  if (Array.isArray(db.deletedIds)) {
+    db.deletedIds.forEach(id => { if (id && !db.tombs[id]) db.tombs[id] = { del: 1, undel: 0 }; });
+  }
+  delete db.deletedIds;
+  if (!db.delPushed || typeof db.delPushed !== 'object') db.delPushed = {};   // id ที่สั่งลบบนระบบกลางไปแล้ว (ไม่ต้องสั่งซ้ำทุกครั้งที่เปิดหน้า)
+  pruneTombs();
+}
+function pruneTombs() {
+  if (!db.delPushed || typeof db.delPushed !== 'object') db.delPushed = {};
+  const cutoff = Date.now() - TOMB_KEEP_MS;
+  Object.keys(db.tombs || {}).forEach(id => {
+    const t = db.tombs[id] || {};
+    const last = Math.max(t.del || 0, t.undel || 0);
+    if (last > 1 && last < cutoff) { delete db.tombs[id]; delete db.delPushed[id]; }
+  });
+}
+function isDeleted(id) {
+  const t = (db.tombs || {})[id];
+  return !!t && (t.del || 0) > (t.undel || 0);
+}
+function markDeleted(id) {
+  const t = db.tombs[id] || (db.tombs[id] = { del: 0, undel: 0 });
+  t.del = Math.max(t.del || 0, Date.now());
+  delete db.delPushed[id];        // ลบรอบใหม่ต้องสั่งลบขึ้นระบบกลางอีกครั้ง (เผื่อเคยเอากลับมาแล้วลบซ้ำ)
+  delete pushedJson['_del_' + id];
+}
+function markUndeleted(id) {
+  const t = db.tombs[id] || (db.tombs[id] = { del: 0, undel: 0 });
+  t.undel = Math.max(t.undel || 0, Date.now());
+  delete db.delPushed[id];        // เอากลับมาแล้ว ถ้าถูกลบอีกในอนาคตต้องสั่งลบใหม่ได้
+  delete pushedJson['_del_' + id];
+}
+function deletedIdList() { return Object.keys(db.tombs || {}).filter(isDeleted); }
+// รวม tombstone จากระบบกลาง — เอาค่ามากสุดของแต่ละช่อง (รองรับรูปแบบเก่าที่เป็นรายการ id ด้วย)
+function mergeTombs(remote, remoteIds) {
+  if (Array.isArray(remoteIds)) remoteIds.forEach(id => { if (id && !db.tombs[id]) db.tombs[id] = { del: 1, undel: 0 }; });
+  if (remote && typeof remote === 'object') {
+    Object.keys(remote).forEach(id => {
+      const r = remote[id] || {}, t = db.tombs[id] || (db.tombs[id] = { del: 0, undel: 0 });
+      t.del = Math.max(t.del || 0, r.del || 0);
+      t.undel = Math.max(t.undel || 0, r.undel || 0);
+    });
+  }
+  pruneTombs();
+}
+
 function loadDB() {
   try {
     const raw = safeStore.get();
@@ -903,7 +958,7 @@ function loadDB() {
   } catch (e) { /* ข้อมูลเสีย เริ่มใหม่ */ }
   if (!db || typeof db !== 'object' || Array.isArray(db)) db = { companies: [], activeId: null };
   if (!Array.isArray(db.companies)) db.companies = [];
-  if (!Array.isArray(db.deletedIds)) db.deletedIds = [];   // รายชื่อบริษัทที่ลบแล้ว (tombstone) — กันระบบกลาง/เครื่องอื่นดันข้อมูลที่ลบกลับมา
+  migrateTombs();   // รายการบริษัทที่ลบแล้ว (tombstone) — กันระบบกลาง/เครื่องอื่นดันข้อมูลที่ลบกลับมา
   if (!Array.isArray(db.employees)) db.employees = [];
   if (db.companies.length === 0) {
     db.companies.push(newCompany());
@@ -1052,7 +1107,7 @@ $('btnDeleteCompany').addEventListener('click', () => {
   if (!confirm(`ลบบริษัท "${c.name || '(ยังไม่ตั้งชื่อ)'}" และประวัติทั้งหมดของบริษัทนี้?`)) return;
   attDeleteByCompany(c.id);   // ลบไฟล์แนบของบริษัทนี้ในเครื่องด้วย
   db.companies = db.companies.filter(x => x.id !== c.id);
-  if (!db.deletedIds.includes(c.id)) db.deletedIds.push(c.id);   // จดว่าลบแล้ว — ตอน push จะลบบนระบบกลางด้วย และกันถูกดันกลับมา
+  markDeleted(c.id);   // จดว่าลบแล้ว — ตอน push จะลบบนระบบกลางด้วย และกันถูกดันกลับมา
   if (db.companies.length === 0) db.companies.push(newCompany());
   db.activeId = db.companies[0].id;
   saveDB(); renderCompanySelect(); loadCompanyToForm();
@@ -1326,10 +1381,7 @@ function applyImportedData(data) {
   let added = 0, updated = 0, merged = 0;
   plan.forEach(({ ic, idx, partial }) => {
     // นำเข้าไฟล์ที่มีบริษัทที่เคยลบ = ตั้งใจเอากลับมา → ยกเลิกสถานะลบ
-    if (db.deletedIds.includes(ic.id)) {
-      db.deletedIds = db.deletedIds.filter(x => x !== ic.id);
-      delete pushedJson['_del_' + ic.id];
-    }
+    if (isDeleted(ic.id)) markUndeleted(ic.id);
     if (idx >= 0) {
       // ไฟล์ที่ไม่มี _json เขียนทับทั้งก้อนไม่ได้ — ประวัติ/งบทดลอง/สถานะอนุมัติ/ลายเซ็นจะหายหมด
       // จึงรวมเฉพาะช่องที่มีมาจริงในไฟล์
@@ -3095,15 +3147,15 @@ async function startSync() {
     // 0) รายชื่อบริษัทที่ถูกลบ (จากเครื่องไหนก็ตาม) — รวมกับของเครื่องนี้ แล้วใช้กรองไม่ให้ของที่ลบแล้วกลับมา
     try {
       const delDoc = await fbDb.collection('meta').doc('deleted').get();
-      const remoteDel = (delDoc.exists && Array.isArray(delDoc.data().ids)) ? delDoc.data().ids : [];
-      db.deletedIds = [...new Set([...(db.deletedIds || []), ...remoteDel])];
+      const dd = delDoc.exists ? (delDoc.data() || {}) : {};
+      mergeTombs(dd.tombs, dd.ids);
     } catch (e) { /* ไม่มีเอกสารนี้ก็ไม่เป็นไร */ }
     // 1) ดึงข้อมูลส่วนกลางมารวมกับในเครื่อง (ใครใหม่กว่าใช้อันนั้น)
     const snap = await fbDb.collection('companies').get();
     applyingRemote = true;
     snap.forEach(d => {
       const rc = d.data();
-      if (!rc || !rc.id || db.deletedIds.includes(rc.id)) return;
+      if (!rc || !rc.id || isDeleted(rc.id)) return;
       const idx = db.companies.findIndex(x => x.id === rc.id);
       // เสมอกันให้ "เครื่องนี้ชนะ" — ของในเครื่องคือสิ่งที่ผู้ใช้เห็น/เพิ่งทำอยู่ ถ้าแพ้ tie ข้อมูลที่กรอกจะหายทั้งที่ไม่มีใครแก้ทับจริง
       if (idx >= 0) {
@@ -3122,8 +3174,8 @@ async function startSync() {
     });
     // เอาบริษัทที่ถูกลบ (จากเครื่องอื่น) ออกจากเครื่องนี้ด้วย — พร้อมล้างไฟล์แนบของบริษัทนั้นทิ้ง
     // (เดิมลบเฉพาะรายการบริษัท ไฟล์แนบค้างใน IndexedDB โดยไม่มีทางเข้าถึงอีกเลย)
-    db.companies.filter(c => db.deletedIds.includes(c.id)).forEach(c => attDeleteByCompany(c.id));
-    db.companies = db.companies.filter(c => !db.deletedIds.includes(c.id));
+    db.companies.filter(c => isDeleted(c.id)).forEach(c => attDeleteByCompany(c.id));
+    db.companies = db.companies.filter(c => !isDeleted(c.id));
     if (db.companies.length === 0) db.companies.push(newCompany());
     // ซ่อมบริษัทที่เปิดอยู่ก่อน แล้วค่อยโหลดพนักงาน — ถ้าบริษัทที่เปิดอยู่ถูกลบจากเครื่องอื่น
     // activeCompany() จะเป็น undefined และทำให้ loadEmployeesFromUsers พังกลางคันแบบเงียบ ๆ
@@ -3151,11 +3203,12 @@ async function startSync() {
           const rid = ch.doc.id;
           const di = db.companies.findIndex(x => x.id === rid);
           if (di >= 0) { db.companies.splice(di, 1); changed = true; changedIds.add(rid); attDeleteByCompany(rid); }
-          if (!db.deletedIds.includes(rid)) db.deletedIds.push(rid);
+          markDeleted(rid);
+          db.delPushed[rid] = 1;   // เครื่องอื่นลบบนระบบกลางไปแล้ว ไม่ต้องสั่งลบซ้ำจากเครื่องนี้
           return;
         }
         const rc = ch.doc.data();
-        if (!rc || !rc.id || db.deletedIds.includes(rc.id)) return;
+        if (!rc || !rc.id || isDeleted(rc.id)) return;
         const idx = db.companies.findIndex(x => x.id === rc.id);
         if (idx >= 0) {
           if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; changedIds.add(rc.id); }
@@ -3196,6 +3249,24 @@ const pushedJson = {};
 // เดิมยัดทุกอย่างลง batch เดียว — บริษัทใหญ่ตัวเดียวหรือรายการลบสะสมมาก ทำให้ทั้งสำนักงานหยุดซิงค์ถาวร
 const PUSH_BATCH_MAX = 400;
 const DOC_BYTES_MAX = 1000000;
+// หาว่าช่องบนสุดช่องไหนเปลี่ยนไปจากครั้งที่ส่งขึ้นไปล่าสุด — คืน null ถ้าไม่มีฐานเทียบ (ต้องส่งทั้งก้อน)
+// ช่องบนสุดของบริษัทแยกกันชัดเจนอยู่แล้ว (est / workflow / history / tb / priorYearTax ...)
+// การส่งเฉพาะช่องที่เปลี่ยนจึงทำให้คนละคนแก้คนละส่วนพร้อมกันได้โดยไม่ลบงานกันเอง
+function changedFields(c, prevJson) {
+  if (!prevJson) return null;
+  let prev;
+  try { prev = JSON.parse(prevJson); } catch (e) { return null; }
+  if (!prev || typeof prev !== 'object') return null;
+  const patch = {};
+  let count = 0;
+  Object.keys(c).forEach(k => {
+    if (JSON.stringify(c[k]) !== JSON.stringify(prev[k])) { patch[k] = c[k]; count++; }
+  });
+  if (!count) return null;
+  patch.id = c.id;                                  // กันเอกสารกำพร้าถ้าเซิร์ฟเวอร์ยังไม่มีรายการนี้
+  if (c._syncAt !== undefined) patch._syncAt = c._syncAt;
+  return patch;
+}
 let cloudPushBlocked = [];   // ชื่อบริษัทที่ส่งไม่ขึ้นเพราะใหญ่เกิน
 let cloudPushProblem = false;   // ยังมีของค้างส่ง — ต้องคาไว้จนกว่าจะส่งสำเร็จ ไม่ให้ป้าย "เชื่อมต่อแล้ว" มากลบ
 async function cloudPushNow() {
@@ -3211,16 +3282,29 @@ async function cloudPushNow() {
     if (pushedJson[c.id] === j) return;   // ไม่มีอะไรเปลี่ยน ไม่ต้องส่งซ้ำ
     // เอกสารเกิน 1 MiB จะถูกปฏิเสธและลากทั้ง batch ล้มไปด้วย — คัดออกแล้วบอกผู้ใช้ว่าบริษัทไหน
     if (j.length > DOC_BYTES_MAX) { cloudPushBlocked.push(c.name || '(ยังไม่ตั้งชื่อบริษัท)'); return; }
-    ops.push({ key: c.id, run: b => b.set(fbDb.collection('companies').doc(c.id), JSON.parse(j)), mark: j });
+    // ส่งเฉพาะ "ช่องที่เปลี่ยนจริง" แบบรวมเข้ากับของเดิมบนเซิร์ฟเวอร์ (merge) แทนการเขียนทับทั้งเอกสาร
+    // — เดิมเขียนทับทั้งก้อน ถ้า A แก้ตัวเลขและ B กดตรวจผ่านไล่เลี่ยกัน ฝ่ายที่ push ทีหลังจะลบงานอีกฝ่ายทิ้งทั้งดุ้น
+    const patch = changedFields(c, pushedJson[c.id]);
+    const ref = fbDb.collection('companies').doc(c.id);
+    ops.push(patch
+      ? { key: c.id, run: b => b.set(ref, patch, { merge: true }), mark: j }
+      : { key: c.id, run: b => b.set(ref, JSON.parse(j)), mark: j });
   });
-  // ลบบริษัทที่ผู้ใช้สั่งลบ ออกจากระบบกลางด้วย + บันทึกรายชื่อที่ลบ (กันเครื่องอื่นดันกลับมา)
-  (db.deletedIds || []).forEach(id => {
-    if (pushedJson['_del_' + id]) return;
-    ops.push({ key: '_del_' + id, run: b => b.delete(fbDb.collection('companies').doc(id)), mark: '1' });
+  // ลบบริษัทที่ผู้ใช้สั่งลบ ออกจากระบบกลางด้วย — สั่งลบครั้งเดียวแล้วจำไว้ถาวร (db.delPushed)
+  // เดิมจำไว้แค่ในหน่วยความจำ ทุกครั้งที่เปิดหน้าจึงสั่งลบซ้ำทุก id ที่เคยลบ ทำให้ batch โตจนล้มและลบซ้ำของที่เอากลับมาแล้ว
+  deletedIdList().forEach(id => {
+    if (db.delPushed[id]) return;
+    ops.push({ key: '_del_' + id, run: b => b.delete(fbDb.collection('companies').doc(id)), mark: '1', delId: id });
   });
-  const dj = JSON.stringify(db.deletedIds || []);
-  if (pushedJson['_deletedIds'] !== dj) {
-    ops.push({ key: '_deletedIds', run: b => b.set(fbDb.collection('meta').doc('deleted'), { ids: JSON.parse(dj), _syncAt: Date.now() }), mark: dj });
+  const tj = JSON.stringify(db.tombs || {});
+  if (pushedJson['_tombs'] !== tj) {
+    // เขียนทั้ง tombs (รูปแบบใหม่ รวมกันได้ถูกต้อง) และ ids (รายชื่อที่ลบอยู่ตอนนี้ เผื่อเครื่องที่ยังใช้รุ่นเก่า)
+    ops.push({
+      key: '_tombs',
+      run: b => b.set(fbDb.collection('meta').doc('deleted'),
+        { tombs: JSON.parse(tj), ids: deletedIdList(), _syncAt: Date.now() }, { merge: true }),
+      mark: tj
+    });
   }
   // หมายเหตุ: เลิกเขียน meta/employees แล้ว — ไม่มีที่ไหนอ่านค่านี้เลย (ฐานพนักงานมาจาก collection users)
   // แถมเป็นช่องให้เครื่องที่ยังไม่อนุมัติเขียนทับรายชื่อทั้งสำนักงาน
@@ -3231,7 +3315,7 @@ async function cloudPushNow() {
     chunk.forEach(o => o.run(batch));
     try {
       await batch.commit();
-      chunk.forEach(o => { pushedJson[o.key] = o.mark; });
+      chunk.forEach(o => { pushedJson[o.key] = o.mark; if (o.delId) db.delPushed[o.delId] = 1; });
       ok += chunk.length;
     } catch (e) {
       chunk.forEach(o => { delete pushedJson[o.key]; });   // ส่งไม่สำเร็จ — รอบหน้าลองส่งใหม่
