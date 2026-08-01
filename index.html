@@ -851,6 +851,29 @@ document.querySelectorAll('input.num').forEach(inp => {
 const LS_KEY = 'pnd51_data_v1';
 let db = { companies: [], activeId: null };
 
+// แถบเตือนถาวรเมื่อบันทึกลงเครื่องไม่ได้ (พื้นที่เต็ม/เบราว์เซอร์ไม่อนุญาต)
+// — เดิมกลืนข้อผิดพลาดเงียบ ๆ ผู้ใช้ทำงานต่อทั้งวันแล้วงานหายหมดตอนปิดหน้า จึงต้องเตือนค้างไว้ ไม่ใช่ toast ที่หายไปเอง
+let storageBannerShown = false;
+function storageWriteFailed() {
+  if (storageBannerShown) return;
+  storageBannerShown = true;
+  const show = () => {
+    if (document.getElementById('storageAlert')) return;
+    const d = document.createElement('div');
+    d.id = 'storageAlert';
+    d.style.cssText = 'position:sticky; top:0; z-index:9998; background:#ffece9; color:#7a1a12;'
+      + ' border:1px solid #ff3b30; border-radius:12px; padding:12px 16px; margin:0 auto 14px; max-width:900px; line-height:1.5';
+    d.innerHTML = '⛔ <b>บันทึกลงเครื่องไม่สำเร็จ — พื้นที่เก็บข้อมูลของเบราว์เซอร์เต็ม</b><br>'
+      + 'งานที่แก้ไขหลังจากนี้จะ<b>หายเมื่อปิดหน้า</b> — โปรดกด “⭳ Export ข้อมูลทั้งหมด (Excel)” ในขั้นตอนที่ 1 เพื่อเก็บงานไว้ทันที '
+      + 'แล้วลบบริษัทที่ไม่ได้ใช้ออก (งบทดลองที่นำเข้าไว้กินพื้นที่มากที่สุด)';
+    const wrap = document.querySelector('.wrap');
+    (wrap || document.body).insertBefore(d, (wrap || document.body).firstChild);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show);
+  else show();
+  try { toast('บันทึกลงเครื่องไม่สำเร็จ — พื้นที่เก็บข้อมูลเต็ม'); } catch (e) {}
+}
+
 // safe storage: ใช้ localStorage ได้เมื่อเบราว์เซอร์อนุญาต มิฉะนั้นเก็บชั่วคราวในหน่วยความจำ
 const safeStore = (() => {
   let mem = null;
@@ -858,19 +881,27 @@ const safeStore = (() => {
     const k = '__pnd51_test__';
     localStorage.setItem(k, '1'); localStorage.removeItem(k);
     return {
-      get: () => { try { return localStorage.getItem(LS_KEY); } catch (e) { return mem; } },
-      set: v => { try { localStorage.setItem(LS_KEY, v); } catch (e) { mem = v; } }
+      // เคยเขียนไม่สำเร็จ = ของในเครื่องเก่ากว่าที่ค้างในหน่วยความจำ ต้องอ่านจากหน่วยความจำแทน
+      // (เดิมอ่านจาก localStorage เสมอ ทำให้ mem เป็นโค้ดตายและงานทั้งเซสชันหายแบบไม่มีสัญญาณ)
+      get: () => { if (mem !== null) return mem; try { return localStorage.getItem(LS_KEY); } catch (e) { return null; } },
+      set: v => {
+        try { localStorage.setItem(LS_KEY, v); mem = null; return true; }
+        catch (e) { mem = v; storageWriteFailed(); return false; }
+      }
     };
   } catch (e) {
-    return { get: () => mem, set: v => { mem = v; } };
+    return { get: () => mem, set: v => { mem = v; storageWriteFailed(); return false; } };
   }
 })();
 
 function loadDB() {
   try {
     const raw = safeStore.get();
-    if (raw) db = JSON.parse(raw);
+    const parsed = raw ? JSON.parse(raw) : null;
+    // ต้องเป็นอ็อบเจกต์จริง ๆ เท่านั้น — ข้อมูลเสียที่ยัง parse ผ่าน (เช่นสตริง) เคยทำให้สคริปต์ตายทั้งหน้าตั้งแต่เริ่ม
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) db = parsed;
   } catch (e) { /* ข้อมูลเสีย เริ่มใหม่ */ }
+  if (!db || typeof db !== 'object' || Array.isArray(db)) db = { companies: [], activeId: null };
   if (!Array.isArray(db.companies)) db.companies = [];
   if (!Array.isArray(db.deletedIds)) db.deletedIds = [];   // รายชื่อบริษัทที่ลบแล้ว (tombstone) — กันระบบกลาง/เครื่องอื่นดันข้อมูลที่ลบกลับมา
   if (!Array.isArray(db.employees)) db.employees = [];
@@ -969,6 +1000,10 @@ function loadCompanyToForm() {
   renderWorkflow();
   renderPriorYearTax();
   setResultVisible(false);
+  // แจ้งเตือนสองอันนี้อยู่นอก #resultInner จึงไม่ถูกล้างพร้อมผลคำนวณ — ต้องซ่อนเอง
+  // มิฉะนั้นคำเตือน "รายได้เกิน 30 ล้าน" หรือข้อผิดพลาดนำเข้างบของบริษัทก่อนหน้าจะค้างอยู่บนบริษัทใหม่
+  $('smeCheckAlert').style.display = 'none';
+  $('importError').style.display = 'none';
   refreshAttachments();   // โหลดเอกสารแนบของบริษัทนี้
   // คำนวณกลับมาให้อัตโนมัติถ้ามีตัวเลขประมาณการอยู่แล้ว — วงกลมขั้น 4 เขียวต่อเนื่องหลังเปิดใหม่
   // และกันผลคำนวณของบริษัทก่อนหน้าค้างอยู่ตอนสลับบริษัท
@@ -1043,8 +1078,8 @@ function renderCompanySearch() {
   if (!hits.length) { wrap.innerHTML = '<div class="hint" style="padding:6px 2px">ไม่พบบริษัทที่ตรงกับคำค้น</div>'; return; }
   wrap.innerHTML = hits.map(c => {
     const st = WF_STATUS[ensureWorkflow(c).status] || WF_STATUS.draft;
-    return `<div onclick="pickCompany('${c.id}')" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 10px; border:1px solid var(--border); border-radius:10px; margin-top:6px; cursor:pointer; background:var(--bg)">
-      <span style="flex:1; min-width:160px"><b>${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')}</b> <span class="hint">รอบปี ${c.year || '-'}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>
+    return `<div onclick="pickCompany('${safeId(c.id)}')" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 10px; border:1px solid var(--border); border-radius:10px; margin-top:6px; cursor:pointer; background:var(--bg)">
+      <span style="flex:1; min-width:160px"><b>${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')}</b> <span class="hint">รอบปี ${escapeHtml(c.year || '-')}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>
       <span class="wf-badge ${st.cls}" style="font-size:.72rem; padding:2px 10px">${st.label}</span>
     </div>`;
   }).join('');
@@ -1152,10 +1187,10 @@ function renderEmployeeList() {
   ).join('');
 }
 function refreshEmployeesUI() {
+  // วาดใหม่อย่างเดียว ห้ามเขียนค่าจาก DOM กลับลงข้อมูล —
+  // ตอน startSync ช่องเหล่านี้ยังค้างค่าของ "ก่อนซิงค์" การเขียนกลับจะลบผู้รับผิดชอบที่เครื่องอื่นเพิ่งกำหนดแล้ว push ทับ
   renderEmployeeList();
-  const c = activeCompany();               // เก็บค่าที่เลือกไว้ก่อน rebuild
-  c.preparer = $('coPreparer').value; c.reviewer = $('coReviewer').value; c.approver = $('coApprover').value;
-  populateAssignSelects();
+  if (activeCompany()) populateAssignSelects();
 }
 $('btnManageEmp').addEventListener('click', () => {
   const p = $('empPanel');
@@ -1256,40 +1291,62 @@ function applyImportedData(data) {
     }
     return 0;
   };
-  let empAdded = 0;
-  if (hasEmp) data.employees.forEach(emp => { if (emp) empAdded += mergeEmp(emp.name, emp.role, emp.rtype); });
-  let added = 0, updated = 0;
+  // ตรวจ+เตรียมทั้งชุดให้เสร็จก่อน แล้วค่อยเขียนลงฐานทีเดียว
+  // — เดิมแก้ db.companies ทีละตัวระหว่างวน ถ้าพังกลางทางจะเหลือสภาพครึ่ง ๆ ที่ถูกบันทึกโดย save ครั้งถัดไป ทั้งที่บอกว่า "นำเข้าไม่สำเร็จ"
+  const plan = [];
   if (incoming) {
+    const newId = () => 'c' + Date.now() + Math.random().toString(36).slice(2, 6);
+    const normTax = t => String(t || '').replace(/\D/g, '');
     incoming.forEach(ic => {
-      if (!ic || !ic.id) { ic.id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6); }
-      if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
-      if (!Array.isArray(ic.history)) ic.history = [];
+      if (!ic || typeof ic !== 'object' || Array.isArray(ic)) return;   // ข้ามรายการเสีย ไม่ให้ทั้งไฟล์ล้ม
+      // ไฟล์ที่ไม่มี _json (เช่น พิมพ์เองใน Excel) มีเฉพาะคอลัมน์ที่อ่านออก
+      const partial = ic._partial === true;
+      delete ic._partial;
+      // รหัสภายในต้องอยู่ในรูปแบบที่ปลอดภัย — ไฟล์นำเข้าใส่รหัสแปลก ๆ มาแล้วไปโผล่ใน onclick ได้
+      if (!safeId(ic.id)) ic.id = newId();
+      if (!partial) {
+        if (!Array.isArray(ic.lossCarry)) ic.lossCarry = [0, 0, 0, 0, 0];
+        if (!Array.isArray(ic.history)) ic.history = [];
+      }
       if (ic.entityType !== 'general' && ic.entityType !== 'sme') ic.entityType = 'sme';   // ไฟล์ไม่มีค่านี้ → ค่าปกติ SME
       // กันข้อมูลซ้ำ: รายการเดียวกัน = เลขผู้เสียภาษี 13 หลัก "และ" รอบปี พ.ศ. ตรงกันทั้งคู่ → อัปเดตทับของเดิม
       // (บริษัทเดิมแต่คนละรอบปี = แยกรายการ) · คงรหัสภายในของรายการเดิมไว้ เพราะผูกกับระบบกลางและเอกสารแนบ
-      const normTax = t => String(t || '').replace(/\D/g, '');
       let idx = db.companies.findIndex(x => x.id === ic.id);
       const icTax = normTax(ic.taxId);
       if (idx < 0 && icTax.length === 13) {
         idx = db.companies.findIndex(x => normTax(x.taxId) === icTax && String(x.year || '') === String(ic.year || ''));
         if (idx >= 0) ic.id = db.companies[idx].id;
       }
-      // นำเข้าไฟล์ที่มีบริษัทที่เคยลบ = ตั้งใจเอากลับมา → ยกเลิกสถานะลบ
-      if (db.deletedIds.includes(ic.id)) {
-        db.deletedIds = db.deletedIds.filter(x => x !== ic.id);
-        delete pushedJson['_del_' + ic.id];
-      }
-      if (idx >= 0) { db.companies[idx] = ic; updated++; }
-      else { db.companies.push(ic); added++; }
-      empAdded += mergeEmp(ic.preparer) + mergeEmp(ic.reviewer) + mergeEmp(ic.approver);
+      plan.push({ ic, idx, partial });
     });
-    if (added && incoming.length) db.activeId = incoming[incoming.length - 1].id;
+    if (!plan.length) throw new Error('ไฟล์ไม่ถูกต้อง — อ่านข้อมูลบริษัทจากไฟล์นี้ไม่ได้');
   }
+  let empAdded = 0;
+  if (hasEmp) data.employees.forEach(emp => { if (emp) empAdded += mergeEmp(emp.name, emp.role, emp.rtype); });
+  let added = 0, updated = 0, merged = 0;
+  plan.forEach(({ ic, idx, partial }) => {
+    // นำเข้าไฟล์ที่มีบริษัทที่เคยลบ = ตั้งใจเอากลับมา → ยกเลิกสถานะลบ
+    if (db.deletedIds.includes(ic.id)) {
+      db.deletedIds = db.deletedIds.filter(x => x !== ic.id);
+      delete pushedJson['_del_' + ic.id];
+    }
+    if (idx >= 0) {
+      // ไฟล์ที่ไม่มี _json เขียนทับทั้งก้อนไม่ได้ — ประวัติ/งบทดลอง/สถานะอนุมัติ/ลายเซ็นจะหายหมด
+      // จึงรวมเฉพาะช่องที่มีมาจริงในไฟล์
+      db.companies[idx] = partial ? { ...db.companies[idx], ...ic } : ic;
+      if (partial) merged++; else updated++;
+    } else {
+      db.companies.push(partial ? { ...newCompany(), ...ic } : ic);
+      added++;
+    }
+    empAdded += mergeEmp(ic.preparer) + mergeEmp(ic.reviewer) + mergeEmp(ic.approver);
+  });
+  if (added && plan.length) db.activeId = plan[plan.length - 1].ic.id;
   db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
   saveDB();
   renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
-  toast(incoming && incoming.length
-    ? `นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated} บริษัท, พนักงานใหม่ ${empAdded} คน`
+  toast(plan.length
+    ? `นำเข้าสำเร็จ: เพิ่ม ${added} บริษัท, อัปเดต ${updated + merged} บริษัท${merged ? ` (ในนั้น ${merged} รายรวมเฉพาะช่องที่มีในไฟล์ — ประวัติ/งบทดลอง/สถานะเดิมคงไว้)` : ''}, พนักงานใหม่ ${empAdded} คน`
     : `นำเข้าพนักงานสำเร็จ: เพิ่ม ${empAdded} คน`);
 }
 // ช่องวันที่จาก Excel: ถ้าเซลล์ถูก Excel เก็บเป็น "เลขลำดับวัน" (date serial) หรือ Date ให้แปลงกลับเป็นข้อความ วัน/เดือน/ปี
@@ -1321,6 +1378,7 @@ function workbookToData(wb) {
       // ไฟล์ที่ไม่มี _json (เช่น พิมพ์เองใน Excel) — สร้างบริษัทจากคอลัมน์ที่อ่านได้
       if (r['ชื่อบริษัท']) {
         data.companies.push({
+          _partial: true,   // มีเฉพาะคอลัมน์ที่อ่านออก — ตอนนำเข้าต้องรวมทับ ห้ามเขียนทับทั้งก้อน
           name: String(r['ชื่อบริษัท']).trim(), taxId: excelTaxIdText(r['เลขผู้เสียภาษี']),
           year: parseInt(r['รอบปี พ.ศ.']) || (new Date().getFullYear() + 543),
           jobCode: String(r['Job Code'] || '').trim(), yearEnd: excelDateText(r['วันสิ้นรอบบัญชี']),
@@ -1403,11 +1461,13 @@ async function attListFor(companyId) {
     rq.onerror = () => rej(rq.error);
   });
 }
-async function attSave(file, kind, note) {
+async function attSave(file, kind, note, companyId) {
   if (file.size > 15 * 1024 * 1024) { toast('ไฟล์ใหญ่เกิน 15MB — แนบไม่ได้'); return null; }
+  const owner = companyId || (activeCompany() || {}).id;
+  if (!owner) return null;
   const rec = {
     id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6),
-    companyId: activeCompany().id, kind, note: note || '',
+    companyId: owner, kind, note: note || '',
     name: file.name, type: file.type || '', size: file.size,
     addedAt: new Date().toISOString(), blob: file
   };
@@ -1434,8 +1494,8 @@ function renderAttachments() {
     const rows = files.map(a =>
       `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:4px 0 4px 12px; border-top:1px dashed var(--border)">`
       + `<span style="flex:1; min-width:160px">📄 ${escapeHtml(a.name)}${a.note ? ' <span class="hint">[' + escapeHtml(a.note) + ']</span>' : ''} <span class="hint">· ${fmtSize(a.size)}</span></span>`
-      + `<button class="btn-outline btn-sm" onclick="attPreview('${a.id}')" type="button">👁 ดู</button>`
-      + `<button class="btn-danger-outline" onclick="attDelete('${a.id}')" type="button">ลบ</button>`
+      + `<button class="btn-outline btn-sm" onclick="attPreview('${safeId(a.id)}')" type="button">👁 ดู</button>`
+      + `<button class="btn-danger-outline" onclick="attDelete('${safeId(a.id)}')" type="button">ลบ</button>`
       + `</div>`).join('');
     return `<div style="border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:8px">`
       + `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">`
@@ -1472,20 +1532,29 @@ async function attDeleteByCompany(companyId) {
   } catch (e) {}
 }
 // งบทดลองที่นำเข้า → เก็บเข้าเอกสารแนบอัตโนมัติ (งวดเดียวกันแทนที่ของเดิม)
-async function attSaveTb(file, slot) {
+async function attSaveTb(file, slot, companyId) {
   try {
+    const owner = companyId || (activeCompany() || {}).id;
+    if (!owner) return;
     const note = 'งวด ' + slot;
-    const olds = attCache.filter(a => a.kind === 'tb' && a.note === note);
+    // อ่านรายการของบริษัทเป้าหมายจากที่เก็บจริง ไม่ใช้ attCache (ซึ่งเป็นของบริษัทที่กำลังเปิดอยู่ อาจคนละตัว)
+    const olds = (await attListFor(owner)).filter(a => a.kind === 'tb' && a.note === note);
     if (olds.length) await attTx(st => { olds.forEach(o => st.delete(o.id)); });
-    await attSave(file, 'tb', note);
-    await refreshAttachments();
+    await attSave(file, 'tb', note, owner);
+    if ((activeCompany() || {}).id === owner) await refreshAttachments();
   } catch (e) {}
+}
+// URL ของตัวอย่างที่เปิดค้างอยู่ — ต้องคืนหน่วยความจำก่อนเปิดอันใหม่/ปิด มิฉะนั้น blob (ไฟล์ละไม่เกิน 15MB) ค้างจนกว่าจะปิดแท็บ
+let attPreviewUrl = null;
+function attRevokePreview() {
+  if (attPreviewUrl) { try { URL.revokeObjectURL(attPreviewUrl); } catch (e) {} attPreviewUrl = null; }
 }
 window.attPreview = function (id) {
   const a = attCache.find(x => x.id === id);
   if (!a) return;
   const t = (a.type || '').toLowerCase();
   const canFrame = t.includes('pdf') || t.startsWith('image/') || t.startsWith('text/');
+  attRevokePreview();
   const url = URL.createObjectURL(a.blob);
   const download = () => {
     const dl = document.createElement('a');
@@ -1499,6 +1568,7 @@ window.attPreview = function (id) {
     setTimeout(() => URL.revokeObjectURL(url), 3000);
     return;
   }
+  attPreviewUrl = url;
   let ov = document.getElementById('attOverlay');
   if (ov) ov.remove();
   ov = document.createElement('div');
@@ -1510,7 +1580,7 @@ window.attPreview = function (id) {
         ? '<div style="text-align:center; padding:10px"><img src="' + url + '" style="max-width:100%"></div>'
         : '<iframe src="' + url + '" title="attachment-preview"></iframe>') + '</div>';
   document.body.appendChild(ov);
-  document.getElementById('attClose').onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
+  document.getElementById('attClose').onclick = () => { ov.remove(); attRevokePreview(); };
   document.getElementById('attDl').onclick = download;
 };
 
@@ -2069,7 +2139,7 @@ function renderHistory() {
     const d = new Date(h.date);
     html += `<tr>
       <td>${d.toLocaleDateString('th-TH')} ${d.toLocaleTimeString('th-TH', {hour:'2-digit',minute:'2-digit'})}</td>
-      <td>${h.year}</td>
+      <td>${escapeHtml(h.year)}</td>
       <td>${h.entityType === 'sme' ? 'SME' : 'ทั่วไป'}</td>
       <td class="amt">${fmt(h.profit)}</td>
       <td class="amt">${fmt(h.tax)}</td>
@@ -2298,12 +2368,12 @@ function buildPrintReport() {
     <div class="sub-title">เอกสารประกอบการคำนวณภายใน — ไม่ใช่แบบแสดงรายการของกรมสรรพากร</div>
     <div class="hdr">
       <div class="h-l">
-        <b>${c.name || '-'}</b>${c.jobCode ? ' &nbsp;(Job Code: ' + c.jobCode + ')' : ''}<br>
-        <span class="lbl">เลขประจำตัวผู้เสียภาษี</span> ${c.taxId || '-'}
+        <b>${escapeHtml(c.name || '-')}</b>${c.jobCode ? ' &nbsp;(Job Code: ' + escapeHtml(c.jobCode) + ')' : ''}<br>
+        <span class="lbl">เลขประจำตัวผู้เสียภาษี</span> ${escapeHtml(c.taxId || '-')}
       </div>
       <div class="h-c">
         <span class="lbl">รอบระยะเวลาบัญชี (ปี พ.ศ.)</span><br>
-        <b>${c.year}</b>${c.yearEnd ? ' (สิ้นรอบ ' + c.yearEnd + ')' : ''}<br>
+        <b>${escapeHtml(c.year)}</b>${c.yearEnd ? ' (สิ้นรอบ ' + escapeHtml(c.yearEnd) + ')' : ''}<br>
         ${r.entityType === 'sme' ? 'SME (อัตราขั้นบันได)' : 'บริษัททั่วไป (20%)'}
       </div>
       <div class="h-r">
@@ -2561,30 +2631,43 @@ function parseTrialBalance(aoa) {
 function readFile(input, slot) {
   const file = input.files[0];
   if (!file) return;
+  // จับบริษัทที่ทำอยู่ "ตอนเลือกไฟล์" — ไฟล์ใหญ่ใช้เวลาอ่าน ผู้ใช้อาจสลับบริษัทไปแล้วก่อน onload ทำงาน
+  // เดิมอ่าน activeCompany() ตอน onload ทำให้งบของบริษัทหนึ่งไปลงอีกบริษัท และลบไฟล์แนบงบของบริษัทนั้นทิ้ง
+  const targetId = (activeCompany() || {}).id;
   const reader = new FileReader();
   reader.onload = e => {
+    const cur = activeCompany();
+    const stillActive = !!(cur && cur.id === targetId);
     try {
       const wb = XLSX.read(e.target.result, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
       const parsed = parseTrialBalance(aoa);
-      if (slot === 'A') { parsedA = parsed; $('metaA').textContent = describeParsed(parsed); }
-      else if (slot === 'C') { parsedC = parsed; $('metaC').textContent = describeParsed(parsed); }
-      else { parsedB = parsed; $('metaB').textContent = describeParsed(parsed); }
-      autoFillWht(slot, parsed);
-      attSaveTb(file, slot);   // เก็บไฟล์งบทดลองเข้าเอกสารแนบอัตโนมัติ
       // เก็บข้อมูลงบที่อ่านได้ติดตัวบริษัทไว้ถาวร — ปิด/เปิดใหม่หรือเปิดเครื่องอื่น (ผ่านระบบกลาง) ก็ยังอยู่
-      const cc = activeCompany();
+      const cc = db.companies.find(x => x.id === targetId);
       if (cc) {
         if (!cc.tb || typeof cc.tb !== 'object') cc.tb = {};
         cc.tb[slot] = parsed;
         saveDB();
       }
-      $('importError').style.display = 'none';
-      renderCompare();
+      attSaveTb(file, slot, targetId);   // เก็บไฟล์งบทดลองเข้าเอกสารแนบอัตโนมัติ (ของบริษัทที่เลือกไว้ตอนแรก)
+      if (stillActive) {
+        if (slot === 'A') { parsedA = parsed; $('metaA').textContent = describeParsed(parsed); }
+        else if (slot === 'C') { parsedC = parsed; $('metaC').textContent = describeParsed(parsed); }
+        else { parsedB = parsed; $('metaB').textContent = describeParsed(parsed); }
+        autoFillWht(slot, parsed);
+        $('importError').style.display = 'none';
+        renderCompare();
+      } else {
+        toast(`นำเข้างบทดลองงวด ${slot} เข้าบริษัท “${(cc && cc.name) || '-'}” แล้ว (สลับบริษัทระหว่างอ่านไฟล์)`);
+      }
     } catch (err) {
-      $('importError').style.display = 'block';
-      $('importError').innerHTML = '<b>นำเข้าไม่สำเร็จ</b>' + (err.message || err);
+      if (stillActive) {
+        $('importError').style.display = 'block';
+        $('importError').innerHTML = '<b>นำเข้าไม่สำเร็จ</b>' + escapeHtml(err.message || err);
+      } else {
+        toast('นำเข้างบทดลองไม่สำเร็จ: ' + (err.message || err));
+      }
     }
   };
   reader.onerror = () => {
@@ -2806,9 +2889,15 @@ function colLabel(p, fallback) {
   if (p.period) return tag + ' · ' + name + ' · ' + p.period;
   return fallback;
 }
+// หนีอักขระพิเศษก่อนแทรกลง HTML — รวม ' ด้วย เพราะแอตทริบิวต์บางที่ใช้ single quote ครอบ
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// รหัสภายในที่ปลอดภัยพอจะแทรกใน onclick="fn('...')" — ยอมเฉพาะตัวอักษร/ตัวเลข/-/_
+// (รหัสที่ระบบสร้างเองเป็นรูปแบบนี้อยู่แล้ว · ค่าที่มาจากไฟล์นำเข้าถูกล้างตั้งแต่ตอนนำเข้า)
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+function safeId(v) { return SAFE_ID.test(String(v || '')) ? String(v) : ''; }
 
 function renderDetail() {
   const p = estimatePeriod();
@@ -2925,6 +3014,12 @@ async function cloudInit() {
     fbAuth.onAuthStateChanged(async u => {
       cloudUser = u;
       cloudApproved = false;
+      if (!u) {
+        // ล้างสถานะของผู้ใช้คนก่อนให้หมด — บทบาทค้างไว้เป็นกับดักสำหรับโค้ดที่เช็ค cloudRole อย่างเดียวในอนาคต
+        cloudRole = '';
+        Object.keys(pushedJson).forEach(k => { delete pushedJson[k]; });
+        cloudPushProblem = false;
+      }
       if (u) {
         await checkApproval();
         if (cloudApproved) startSync(); else stopSync();
@@ -2945,6 +3040,7 @@ async function checkApproval() {
     const ref = fbDb.collection('users').doc(cloudUser.uid);
     const doc = await ref.get();
     if (doc.exists) {
+      if (doc.data().rejected === true) { cloudApproved = false; cloudRole = ''; return; }   // ถูกปฏิเสธแล้ว ห้ามวนขอใหม่เอง
       cloudApproved = doc.data().approved === true;
       cloudRole = doc.data().role || 'staff';
     } else {
@@ -2968,16 +3064,29 @@ async function loadEmployeesFromUsers() {
     us.forEach(d => {
       const u = d.data();
       const rtype = u.role || 'staff';
-      emps.push({ name: (u.name || u.email || '').trim(), email: u.email || '', role: CLOUD_ROLE_LABELS[rtype] || rtype, rtype });
+      emps.push({ name: (u.name || u.email || '').trim(), email: u.email || '', role: CLOUD_ROLE_LABELS[rtype] || rtype, rtype, src: 'cloud' });
     });
+    // ผู้ดูแลที่ระบุด้วยอีเมล (CLOUD_ADMIN_EMAILS) ไม่มีเอกสารใน users จึงไม่ติดมากับ query
+    // — ถ้าไม่เติมเอง partner ตัวจริงจะเลือกเป็นผู้อนุมัติไม่ได้เลย
+    const meEmail = ((cloudUser && cloudUser.email) || '').toLowerCase();
+    if (CLOUD_ADMIN_EMAILS.includes(meEmail) && !emps.some(e => (e.email || '').toLowerCase() === meEmail)) {
+      emps.push({ name: cloudUser.email, email: cloudUser.email, role: CLOUD_ROLE_LABELS.partner, rtype: 'partner', src: 'cloud' });
+    }
     if (emps.length) {
-      emps.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-      db.employees = emps;
+      // รวมกับรายชื่อที่เพิ่มไว้เองในโหมดออฟไลน์ แทนการเขียนทับทิ้ง
+      // — เดิมทับทั้งชุด ทำให้พนักงานที่พิมพ์เองหายถาวร (โหมดระบบกลางซ่อนปุ่มเพิ่ม จึงเพิ่มกลับไม่ได้)
+      const byName = new Map();
+      (db.employees || []).forEach(e => { if (e && e.name && e.src !== 'cloud') byName.set(e.name, e); });
+      emps.forEach(e => byName.set(e.name, e));   // บัญชีระบบกลางมีสิทธิ์ทับชื่อซ้ำ
+      db.employees = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'th'));
       safeStore.set(JSON.stringify(db));
       refreshEmployeesUI();
       renderWorkflow();
     }
-  } catch (e) { /* บทบาทเดิมในเครื่องยังใช้ได้ */ }
+  } catch (e) {
+    // เดิมกลืนเงียบ — ถ้า rules ปฏิเสธหรือเน็ตหลุด ผู้ใช้จะเข้าใจว่ารายชื่อเป็นปัจจุบันทั้งที่ไม่ใช่
+    toast('ดึงรายชื่อผู้ใช้จากระบบกลางไม่สำเร็จ — ใช้รายชื่อเดิมในเครื่องต่อ');
+  }
 }
 
 async function startSync() {
@@ -2997,18 +3106,30 @@ async function startSync() {
       if (!rc || !rc.id || db.deletedIds.includes(rc.id)) return;
       const idx = db.companies.findIndex(x => x.id === rc.id);
       // เสมอกันให้ "เครื่องนี้ชนะ" — ของในเครื่องคือสิ่งที่ผู้ใช้เห็น/เพิ่งทำอยู่ ถ้าแพ้ tie ข้อมูลที่กรอกจะหายทั้งที่ไม่มีใครแก้ทับจริง
-      if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc; else return; }
+      if (idx >= 0) {
+        if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc;
+        else {
+          // ของในเครื่องใหม่กว่า (หรือเสมอ) — ต้องส่งขึ้นไปทับ ไม่ใช่แค่ return
+          // เดิมไม่ล้าง pushedJson ทำให้ฝั่งที่ชนะ "ดูเหมือนส่งไปแล้ว" และสองเครื่องแยกกันถาวร
+          delete pushedJson[rc.id];
+          return;
+        }
+      }
       else db.companies.push(rc);
       // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
       companyStamp[rc.id] = companyProbe(rc);
       pushedJson[rc.id] = JSON.stringify(rc);
     });
-    // เอาบริษัทที่ถูกลบ (จากเครื่องอื่น) ออกจากเครื่องนี้ด้วย
+    // เอาบริษัทที่ถูกลบ (จากเครื่องอื่น) ออกจากเครื่องนี้ด้วย — พร้อมล้างไฟล์แนบของบริษัทนั้นทิ้ง
+    // (เดิมลบเฉพาะรายการบริษัท ไฟล์แนบค้างใน IndexedDB โดยไม่มีทางเข้าถึงอีกเลย)
+    db.companies.filter(c => db.deletedIds.includes(c.id)).forEach(c => attDeleteByCompany(c.id));
     db.companies = db.companies.filter(c => !db.deletedIds.includes(c.id));
     if (db.companies.length === 0) db.companies.push(newCompany());
+    // ซ่อมบริษัทที่เปิดอยู่ก่อน แล้วค่อยโหลดพนักงาน — ถ้าบริษัทที่เปิดอยู่ถูกลบจากเครื่องอื่น
+    // activeCompany() จะเป็น undefined และทำให้ loadEmployeesFromUsers พังกลางคันแบบเงียบ ๆ
+    if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
     // ฐานพนักงาน = บัญชีผู้ใช้ระบบกลางที่อนุมัติแล้ว (ชื่อ + บทบาท Staff/Manager/Partner)
     await loadEmployeesFromUsers();
-    if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
     safeStore.set(JSON.stringify(db));
     applyingRemote = false;
     renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
@@ -3017,23 +3138,30 @@ async function startSync() {
     // 3) ฟังการเปลี่ยนแปลงจากเครื่องอื่นแบบเรียลไทม์
     if (unsubCompanies) unsubCompanies();
     unsubCompanies = fbDb.collection('companies').onSnapshot(s => {
-      if (cloudPushing) return;
+      // เดิมมี `if (cloudPushing) return;` ซึ่งทิ้ง docChanges ทิ้งถาวร (Firestore ไม่ส่งชุดเดิมซ้ำ)
+      // ผลคือพลาดการแก้ของเครื่องอื่นที่มาถึงระหว่างเรากำลัง push แล้วภายหลังยัง push ทับด้วยของเก่าอีก
+      // ตอนนี้ข้ามเฉพาะ "เสียงสะท้อนของการเขียนจากเครื่องนี้เองที่เซิร์ฟเวอร์ยังไม่ยืนยัน"
       let changed = false;
+      const changedIds = new Set();
       applyingRemote = true;
       s.docChanges().forEach(ch => {
+        if (ch.doc.metadata && ch.doc.metadata.hasPendingWrites) return;
         if (ch.type === 'removed') {
           // เครื่องอื่นลบบริษัทนี้ → ลบในเครื่องนี้ตาม และจดกันไม่ให้กลับมา
           const rid = ch.doc.id;
           const di = db.companies.findIndex(x => x.id === rid);
-          if (di >= 0) { db.companies.splice(di, 1); changed = true; }
+          if (di >= 0) { db.companies.splice(di, 1); changed = true; changedIds.add(rid); attDeleteByCompany(rid); }
           if (!db.deletedIds.includes(rid)) db.deletedIds.push(rid);
           return;
         }
         const rc = ch.doc.data();
         if (!rc || !rc.id || db.deletedIds.includes(rc.id)) return;
         const idx = db.companies.findIndex(x => x.id === rc.id);
-        if (idx >= 0) { if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; } else return; }
-        else { db.companies.push(rc); changed = true; }
+        if (idx >= 0) {
+          if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; changedIds.add(rc.id); }
+          else { delete pushedJson[rc.id]; return; }   // ของเราใหม่กว่า/เสมอ → ต้องส่งขึ้นไปทับ ไม่ใช่ปล่อยแยกกัน
+        }
+        else { db.companies.push(rc); changed = true; changedIds.add(rc.id); }
         // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
         companyStamp[rc.id] = companyProbe(rc);
         pushedJson[rc.id] = JSON.stringify(rc);
@@ -3043,8 +3171,16 @@ async function startSync() {
         if (db.companies.length === 0) db.companies.push(newCompany());
         if (!db.companies.some(c => c.id === db.activeId)) db.activeId = db.companies[0].id;
         safeStore.set(JSON.stringify(db));
-        renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
-        toast('มีข้อมูลอัปเดตจากระบบกลาง');
+        renderCompanySelect(); renderEmployeeList(); renderJobsDashboard();
+        // วาดฟอร์มใหม่เฉพาะเมื่อ "บริษัทที่เปิดอยู่" ถูกแก้จริง และผู้ใช้ไม่ได้กำลังพิมพ์ค้างอยู่ —
+        // เดิมวาดใหม่ทุกครั้งที่บริษัทไหนก็ได้เปลี่ยน ทำให้ตัวเลขที่พิมพ์ค้าง (ยังไม่ blur) หายกลางคัน
+        const typing = document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName || '');
+        if (changedIds.has(db.activeId)) {
+          if (typing) toast('บริษัทนี้ถูกแก้จากเครื่องอื่น — สลับบริษัทหรือรีเฟรชเพื่อดูค่าล่าสุด');
+          else { loadCompanyToForm(); toast('มีข้อมูลอัปเดตจากระบบกลาง'); }
+        } else {
+          toast('มีข้อมูลอัปเดตจากระบบกลาง');
+        }
       }
     });
   } catch (e) {
@@ -3056,51 +3192,78 @@ function stopSync() { if (unsubCompanies) { unsubCompanies(); unsubCompanies = n
 // จำเนื้อหาที่ push ขึ้นระบบกลางไปแล้ว — จะ push เฉพาะรายการที่เปลี่ยนจากครั้งก่อน
 // (เดิม push ทุกบริษัทพร้อมประทับเวลาใหม่ทุกครั้ง ทำให้เครื่องที่ push ทีหลังทับข้อมูลใหม่ของเครื่องอื่นด้วยข้อมูลเก่า)
 const pushedJson = {};
+// เพดานจริงของ Firestore: 500 การกระทำต่อ batch และ 1 MiB ต่อเอกสาร
+// เดิมยัดทุกอย่างลง batch เดียว — บริษัทใหญ่ตัวเดียวหรือรายการลบสะสมมาก ทำให้ทั้งสำนักงานหยุดซิงค์ถาวร
+const PUSH_BATCH_MAX = 400;
+const DOC_BYTES_MAX = 1000000;
+let cloudPushBlocked = [];   // ชื่อบริษัทที่ส่งไม่ขึ้นเพราะใหญ่เกิน
+let cloudPushProblem = false;   // ยังมีของค้างส่ง — ต้องคาไว้จนกว่าจะส่งสำเร็จ ไม่ให้ป้าย "เชื่อมต่อแล้ว" มากลบ
 async function cloudPushNow() {
-  if (!fbDb || !cloudUser) return;
+  // ต้องอนุมัติแล้วเท่านั้น — เดิมเช็คแค่ล็อกอิน ผู้ใช้ที่ยังรออนุมัติจึงเขียนทับ meta/deleted
+  // ด้วยรายการว่างได้ ทำให้บริษัทที่ลบไปแล้วฟื้นกลับมาทุกเครื่อง (ฝั่งเซิร์ฟเวอร์ต้องกันด้วย Firestore Rules ซ้ำอีกชั้น)
+  if (!fbDb || !cloudUser || !cloudApproved) return;
   cloudPushing = true;
-  const sentIds = [];
-  try {
-    const batch = fbDb.batch();
-    db.companies.forEach(c => {
-      const j = JSON.stringify(c);
-      if (pushedJson[c.id] === j) return;   // ไม่มีอะไรเปลี่ยน ไม่ต้องส่งซ้ำ
-      batch.set(fbDb.collection('companies').doc(c.id), JSON.parse(j));
-      pushedJson[c.id] = j;
-      sentIds.push(c.id);
-    });
-    const ej = JSON.stringify(db.employees);
-    if (pushedJson['_employees'] !== ej) {
-      batch.set(fbDb.collection('meta').doc('employees'), { list: JSON.parse(ej), _syncAt: Date.now() });
-      pushedJson['_employees'] = ej;
-      sentIds.push('_employees');
-    }
-    // ลบบริษัทที่ผู้ใช้สั่งลบ ออกจากระบบกลางด้วย + บันทึกรายชื่อที่ลบ (กันเครื่องอื่นดันกลับมา)
-    (db.deletedIds || []).forEach(id => {
-      if (pushedJson['_del_' + id]) return;
-      batch.delete(fbDb.collection('companies').doc(id));
-      pushedJson['_del_' + id] = '1';
-      sentIds.push('_del_' + id);
-    });
-    const dj = JSON.stringify(db.deletedIds || []);
-    if (pushedJson['_deletedIds'] !== dj) {
-      batch.set(fbDb.collection('meta').doc('deleted'), { ids: JSON.parse(dj), _syncAt: Date.now() });
-      pushedJson['_deletedIds'] = dj;
-      sentIds.push('_deletedIds');
-    }
-    if (sentIds.length) {
-      await batch.commit();
-      safeStore.set(JSON.stringify(db));
-      $('cloudInfo').textContent = 'ซิงค์ล่าสุด ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-    }
-  } catch (e) {
-    sentIds.forEach(id => { delete pushedJson[id]; });   // ส่งไม่สำเร็จ — รอบหน้าลองส่งใหม่
-    toast('บันทึกขึ้นระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
+  cloudPushBlocked = [];
+  // สร้างรายการงานทั้งหมดก่อน แล้วค่อยหั่นส่งเป็นชุด ๆ — ชุดไหนพังก็เสียเฉพาะชุดนั้น
+  const ops = [];
+  db.companies.forEach(c => {
+    const j = JSON.stringify(c);
+    if (pushedJson[c.id] === j) return;   // ไม่มีอะไรเปลี่ยน ไม่ต้องส่งซ้ำ
+    // เอกสารเกิน 1 MiB จะถูกปฏิเสธและลากทั้ง batch ล้มไปด้วย — คัดออกแล้วบอกผู้ใช้ว่าบริษัทไหน
+    if (j.length > DOC_BYTES_MAX) { cloudPushBlocked.push(c.name || '(ยังไม่ตั้งชื่อบริษัท)'); return; }
+    ops.push({ key: c.id, run: b => b.set(fbDb.collection('companies').doc(c.id), JSON.parse(j)), mark: j });
+  });
+  // ลบบริษัทที่ผู้ใช้สั่งลบ ออกจากระบบกลางด้วย + บันทึกรายชื่อที่ลบ (กันเครื่องอื่นดันกลับมา)
+  (db.deletedIds || []).forEach(id => {
+    if (pushedJson['_del_' + id]) return;
+    ops.push({ key: '_del_' + id, run: b => b.delete(fbDb.collection('companies').doc(id)), mark: '1' });
+  });
+  const dj = JSON.stringify(db.deletedIds || []);
+  if (pushedJson['_deletedIds'] !== dj) {
+    ops.push({ key: '_deletedIds', run: b => b.set(fbDb.collection('meta').doc('deleted'), { ids: JSON.parse(dj), _syncAt: Date.now() }), mark: dj });
   }
+  // หมายเหตุ: เลิกเขียน meta/employees แล้ว — ไม่มีที่ไหนอ่านค่านี้เลย (ฐานพนักงานมาจาก collection users)
+  // แถมเป็นช่องให้เครื่องที่ยังไม่อนุมัติเขียนทับรายชื่อทั้งสำนักงาน
+  let ok = 0, failed = 0;
+  for (let i = 0; i < ops.length; i += PUSH_BATCH_MAX) {
+    const chunk = ops.slice(i, i + PUSH_BATCH_MAX);
+    const batch = fbDb.batch();
+    chunk.forEach(o => o.run(batch));
+    try {
+      await batch.commit();
+      chunk.forEach(o => { pushedJson[o.key] = o.mark; });
+      ok += chunk.length;
+    } catch (e) {
+      chunk.forEach(o => { delete pushedJson[o.key]; });   // ส่งไม่สำเร็จ — รอบหน้าลองส่งใหม่
+      failed += chunk.length;
+      toast('บันทึกขึ้นระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
+    }
+  }
+  if (ok) safeStore.set(JSON.stringify(db));
   cloudPushing = false;
+  renderPushStatus(ok, failed);
+}
+// สถานะการส่งขึ้นระบบกลาง — ต้องเห็นชัดว่ายังไม่ได้ซิงค์ ไม่ใช่ขึ้น "เชื่อมต่อแล้ว" ค้างไว้ทั้งที่ไม่มีอะไรขึ้นเลย
+function renderPushStatus(ok, failed) {
+  const el = $('cloudInfo');
+  if (!el) return;
+  const t = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  cloudPushProblem = !!(failed || cloudPushBlocked.length);
+  if (cloudPushProblem) {
+    let m = '⚠ ';
+    if (failed) m += `ยังส่งขึ้นระบบกลางไม่สำเร็จ ${failed} รายการ (จะลองใหม่เมื่อมีการแก้ไขครั้งถัดไป) `;
+    if (cloudPushBlocked.length) m += `· ข้อมูลใหญ่เกิน 1MB ส่งไม่ได้: ${cloudPushBlocked.join(', ')} — ลบงบทดลองงวดที่ไม่ใช้ออกก่อน`;
+    el.textContent = m;
+    el.style.color = 'var(--red)';
+    const badge = $('cloudBadge');
+    if (badge) { badge.className = 'wf-badge wf-returned'; badge.textContent = 'ซิงค์ไม่ครบ — ข้อมูลบางส่วนยังไม่ขึ้นระบบกลาง'; }
+  } else if (ok) {
+    el.textContent = 'ซิงค์ล่าสุด ' + t;
+    el.style.color = '';
+  }
 }
 function cloudSchedulePush() {
-  if (!cloudUser || applyingRemote) return;
+  if (!cloudUser || !cloudApproved || applyingRemote) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(cloudPushNow, 1500);
 }
@@ -3152,9 +3315,14 @@ function renderCloudUI() {
     $('cloudPending').style.display = 'block';
     return;
   }
-  badge.className = 'wf-badge wf-approved';
-  badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '')
-    + (cloudRole ? ' · ' + (CLOUD_ROLE_LABELS[cloudRole] || cloudRole) : '');
+  if (cloudPushProblem) {
+    badge.className = 'wf-badge wf-returned';
+    badge.textContent = 'ซิงค์ไม่ครบ — ข้อมูลบางส่วนยังไม่ขึ้นระบบกลาง';
+  } else {
+    badge.className = 'wf-badge wf-approved';
+    badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '')
+      + (cloudRole ? ' · ' + (CLOUD_ROLE_LABELS[cloudRole] || cloudRole) : '');
+  }
   $('cloudConnected').style.display = 'block';
   $('cloudAdminPanel').style.display = isCloudAdmin() ? 'block' : 'none';
   if (isCloudAdmin()) { loadPendingUsers(); loadAllUsers(); }
@@ -3167,22 +3335,22 @@ async function loadPendingUsers() {
   const wrap = $('cloudPendingList');
   try {
     const snap = await fbDb.collection('users').where('approved', '==', false).get();
-    if (snap.empty) { wrap.innerHTML = '<div class="wf-empty">ไม่มีคำขอค้างอยู่</div>'; return; }
     let h = '';
     snap.forEach(d => {
       const u = d.data();
+      if (u.rejected === true) return;   // ปฏิเสธไปแล้ว ไม่ต้องโผล่ในคิวอีก
       h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 0; border-bottom:1px solid var(--border)">`
         + `<span style="flex:1; min-width:180px"><b>${escapeHtml(u.name || '(ไม่ระบุชื่อ)')}</b> · ${escapeHtml(u.email || '')}</span>`
-        + `<select id="roleSel_${d.id}" style="width:auto; padding:6px 10px; font-size:.85rem">`
+        + `<select id="roleSel_${safeId(d.id)}" style="width:auto; padding:6px 10px; font-size:.85rem">`
         + `<option value="staff">Staff (ผู้จัดทำ)</option>`
         + `<option value="manager">Manager (จัดทำ/ตรวจสอบ)</option>`
         + `<option value="partner">Partner (ผู้อนุมัติ/ผู้ดูแล)</option>`
         + `</select>`
-        + `<button class="btn-approve btn-sm" onclick="cloudApproveUser('${d.id}')" type="button">✔ อนุมัติ</button>`
-        + `<button class="btn-reject btn-sm" onclick="cloudRejectUser('${d.id}')" type="button">✕ ปฏิเสธ</button>`
+        + `<button class="btn-approve btn-sm" onclick="cloudApproveUser('${safeId(d.id)}')" type="button">✔ อนุมัติ</button>`
+        + `<button class="btn-reject btn-sm" onclick="cloudRejectUser('${safeId(d.id)}')" type="button">✕ ปฏิเสธ</button>`
         + `</div>`;
     });
-    wrap.innerHTML = h;
+    wrap.innerHTML = h || '<div class="wf-empty">ไม่มีคำขอค้างอยู่</div>';
   } catch (e) {
     wrap.innerHTML = '<div class="wf-empty">โหลดรายการไม่สำเร็จ: ' + escapeHtml(thaiAuthError(e)) + '</div>';
   }
@@ -3199,7 +3367,12 @@ window.cloudApproveUser = async function (uid) {
 window.cloudRejectUser = async function (uid) {
   if (!confirm('ปฏิเสธคำขอนี้? (บัญชีล็อกอินจะยังอยู่แต่เข้าถึงข้อมูลส่วนกลางไม่ได้ — ถ้าต้องการลบบัญชีถาวร ให้ลบใน Firebase Console)')) return;
   try {
-    await fbDb.collection('users').doc(uid).delete();
+    // เดิมลบเอกสารทิ้ง — พอผู้ถูกปฏิเสธเปิดหน้าใหม่ checkApproval จะสร้างคำขอให้อัตโนมัติ วนกลับเข้าคิวไม่รู้จบ
+    // จึงบันทึกเป็น "ปฏิเสธแล้ว" ค้างไว้แทน
+    await fbDb.collection('users').doc(uid).update({
+      approved: false, rejected: true, role: '',
+      rejectedBy: (cloudUser && cloudUser.email) || '', rejectedAt: new Date().toISOString()
+    });
     toast('ปฏิเสธคำขอแล้ว');
     loadPendingUsers();
   } catch (e) { toast('ปฏิเสธไม่สำเร็จ: ' + thaiAuthError(e)); }
@@ -3220,8 +3393,8 @@ async function loadAllUsers() {
       const opt = v => `<option value="${v}"${r === v ? ' selected' : ''}>${CLOUD_ROLE_LABELS[v]}</option>`;
       h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 0; border-bottom:1px solid var(--border)">`
         + `<span style="flex:1; min-width:180px"><b>${escapeHtml(u.name || '(ไม่ระบุชื่อ)')}</b> · ${escapeHtml(u.email || '')}${isMe ? ' <span class="hint">(คุณ)</span>' : ''}</span>`
-        + `<select id="userRole_${d.id}" style="width:auto; padding:6px 10px; font-size:.85rem">${opt('staff')}${opt('manager')}${opt('partner')}</select>`
-        + `<button class="btn-outline btn-sm" onclick="cloudChangeRole('${d.id}')" type="button">บันทึกบทบาท</button>`
+        + `<select id="userRole_${safeId(d.id)}" style="width:auto; padding:6px 10px; font-size:.85rem">${opt('staff')}${opt('manager')}${opt('partner')}</select>`
+        + `<button class="btn-outline btn-sm" onclick="cloudChangeRole('${safeId(d.id)}')" type="button">บันทึกบทบาท</button>`
         + `</div>`;
     });
     wrap.innerHTML = h;
@@ -3249,8 +3422,10 @@ $('btnCloudSaveCfg').addEventListener('click', () => {
   try {
     const cfg = parseConfigText($('cloudCfgText').value);
     localStorage.setItem(CLOUD_CFG_KEY, JSON.stringify(cfg));
-    toast('บันทึกการตั้งค่าแล้ว — กำลังเชื่อมต่อ...');
-    cloudInit();
+    // ต้องโหลดหน้าใหม่จริง ๆ — firebase.initializeApp เรียกซ้ำไม่ได้ ถ้าแค่เรียก cloudInit()
+    // จะยังต่อโปรเจกต์เดิมทั้งที่ขึ้นว่าสำเร็จ (และผูก onAuthStateChanged ซ้อนเพิ่มอีกตัว)
+    toast('บันทึกการตั้งค่าแล้ว — กำลังโหลดหน้าใหม่เพื่อเชื่อมต่อ...');
+    setTimeout(() => location.reload(), 700);
   } catch (e) {
     toast('ตั้งค่าไม่สำเร็จ: ' + (e.message || e));
   }
@@ -3362,9 +3537,9 @@ function renderJobsDashboard() {
                 : (wf.status === 'reviewed' && wf.assigned && wf.assigned.approver) ? ' · ส่งให้ ' + escapeHtml(wf.assigned.approver)
                 : (wf.status === 'filed' && wf.filing) ? ' · ยื่นเมื่อ ' + escapeHtml(wf.filing.date || '') : '';
       h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0 6px 4px; border-bottom:1px solid var(--border)">`
-        + `<span style="flex:1; min-width:160px">${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')} <span class="hint">รอบปี ${c.year || '-'}${who}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>`
+        + `<span style="flex:1; min-width:160px">${escapeHtml(c.name || '(ยังไม่ตั้งชื่อบริษัท)')} <span class="hint">รอบปี ${escapeHtml(c.year || '-')}${who}${c.jobCode ? ' · ' + escapeHtml(c.jobCode) : ''}</span></span>`
         + deadlineBadge(c, wf.status)
-        + `<button class="btn-outline btn-sm" onclick="openJob('${c.id}')" type="button">เปิดงาน →</button>`
+        + `<button class="btn-outline btn-sm" onclick="openJob('${safeId(c.id)}')" type="button">เปิดงาน →</button>`
         + `</div>`;
     });
   });
@@ -3408,7 +3583,7 @@ function renderDashSummary() {
         return `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0 6px 4px; border-bottom:1px solid var(--border)">
           <span style="flex:1; min-width:160px">${escapeHtml(a.c.name || '(ยังไม่ตั้งชื่อบริษัท)')} <span class="hint">${(WF_STATUS[a.wf.status] || WF_STATUS.draft).label}</span></span>
           <span class="wf-badge ${over ? 'wf-returned' : 'wf-submitted'}" style="font-size:.75rem; padding:2px 10px">${over ? '⚠ เลยกำหนด ' + (-a.di.days) + ' วัน' : '⏰ เหลือ ' + a.di.days + ' วัน'} (${a.di.label})</span>
-          <button class="btn-outline btn-sm" onclick="openJob('${a.c.id}')" type="button">เปิดงาน →</button>
+          <button class="btn-outline btn-sm" onclick="openJob('${safeId(a.c.id)}')" type="button">เปิดงาน →</button>
         </div>`;
       }).join('');
 }
