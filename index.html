@@ -887,10 +887,11 @@ const safeStore = (() => {
       set: v => {
         try { localStorage.setItem(LS_KEY, v); mem = null; return true; }
         catch (e) { mem = v; storageWriteFailed(); return false; }
-      }
+      },
+      clear: () => { mem = null; try { localStorage.removeItem(LS_KEY); } catch (e) {} }
     };
   } catch (e) {
-    return { get: () => mem, set: v => { mem = v; storageWriteFailed(); return false; } };
+    return { get: () => mem, set: v => { mem = v; storageWriteFailed(); return false; }, clear: () => { mem = null; } };
   }
 })();
 
@@ -1577,6 +1578,17 @@ window.attDelete = async function (id) {
   toast('ลบไฟล์แนบแล้ว');
   refreshAttachments();
 };
+async function attCountAll() {
+  try {
+    const d = await attOpen();
+    return await new Promise(res => {
+      const rq = d.transaction('files', 'readonly').objectStore('files').count();
+      rq.onsuccess = () => res(rq.result || 0);
+      rq.onerror = () => res(0);
+    });
+  } catch (e) { return 0; }
+}
+async function attClearAll() { try { await attTx(st => st.clear()); } catch (e) {} }
 async function attDeleteByCompany(companyId) {
   try {
     const list = await attListFor(companyId);
@@ -3320,6 +3332,29 @@ async function startSync() {
   renderCloudUI();
 }
 function stopSync() { if (unsubCompanies) { unsubCompanies(); unsubCompanies = null; } }
+// บริษัทที่เนื้อหายังไม่ตรงกับที่ส่งขึ้นระบบกลางล่าสุด = ยังไม่ปลอดภัยที่จะล้างทิ้ง
+function unsyncedCompanies() {
+  return db.companies.filter(c => pushedJson[c.id] !== JSON.stringify(c));
+}
+// ล้างข้อมูลทั้งหมดที่เครื่องนี้ถืออยู่ — ใช้ตอนออกจากระบบบนเครื่องที่ใช้ร่วมกัน
+// ข้อมูลบริษัทอยู่บนระบบกลางแล้วจึงได้กลับมาเมื่อล็อกอินใหม่ · เอกสารแนบไม่เคยขึ้นระบบกลาง จะหายถาวร
+async function wipeLocalData() {
+  attRevokePreview();
+  const ov = document.getElementById('attOverlay');
+  if (ov) ov.remove();
+  await attClearAll();
+  attCache = [];
+  safeStore.clear();
+  Object.keys(companyStamp).forEach(k => { delete companyStamp[k]; });
+  Object.keys(pushedJson).forEach(k => { delete pushedJson[k]; });
+  db = { companies: [], activeId: null };
+  loadDB();
+  primeCompanyStamps();
+  renderCompanySelect();
+  loadCompanyToForm();
+  renderEmployeeList();
+  renderJobsDashboard();
+}
 // จำเนื้อหาที่ push ขึ้นระบบกลางไปแล้ว — จะ push เฉพาะรายการที่เปลี่ยนจากครั้งก่อน
 // (เดิม push ทุกบริษัทพร้อมประทับเวลาใหม่ทุกครั้ง ทำให้เครื่องที่ push ทีหลังทับข้อมูลใหม่ของเครื่องอื่นด้วยข้อมูลเก่า)
 const pushedJson = {};
@@ -3613,7 +3648,26 @@ $('btnCloudLogin').addEventListener('click', async () => {
   }
 });
 $('btnCloudLogout').addEventListener('click', async () => {
-  try { await fbAuth.signOut(); toast('ออกจากระบบแล้ว — ใช้โหมดออฟไลน์ต่อได้'); } catch (e) {}
+  // เครื่องที่ใช้ร่วมกันในสำนักงาน: ออกจากระบบแล้วต้องไม่เหลือข้อมูลลูกค้าให้คนถัดไปเปิดดูได้
+  // ก่อนล้าง ต้องพยายามส่งงานที่ค้างขึ้นระบบกลางให้ครบก่อน แล้วบอกให้ชัดว่าอะไรกู้คืนได้ อะไรไม่ได้
+  if (unsyncedCompanies().length) {
+    toast('กำลังส่งข้อมูลที่ค้างขึ้นระบบกลางก่อนออกจากระบบ...');
+    await cloudPushNow();
+  }
+  const stillPending = unsyncedCompanies();
+  const files = await attCountAll();
+  let msg = 'ออกจากระบบและล้างข้อมูลในเครื่องนี้?\n\n'
+    + '• ข้อมูลบริษัทจะถูกลบออกจากเครื่องนี้ — ยังอยู่บนระบบกลาง ล็อกอินใหม่แล้วได้กลับมาครบ\n';
+  if (files) msg += `• เอกสารแนบ ${files} ไฟล์จะถูกลบถาวร — ไฟล์แนบไม่ได้ขึ้นระบบกลาง กู้คืนไม่ได้\n`;
+  if (stillPending.length) {
+    msg += `\n⛔ ยังมี ${stillPending.length} บริษัทที่ส่งขึ้นระบบกลางไม่สำเร็จ — ข้อมูลส่วนนี้จะหายถาวร\n`
+        + 'แนะนำให้กด "ยกเลิก" แล้ว Export ข้อมูลเก็บไว้ก่อน\n';
+  }
+  msg += '\nกด "ยกเลิก" เพื่ออยู่ในระบบต่อ';
+  if (!confirm(msg)) return;
+  try { await fbAuth.signOut(); } catch (e) {}
+  await wipeLocalData();
+  toast('ออกจากระบบและล้างข้อมูลในเครื่องนี้แล้ว');
 });
 $('btnCloudSyncNow').addEventListener('click', async () => {
   toast('กำลังซิงค์...');
@@ -3650,7 +3704,9 @@ $('btnCloudCheckApproval').addEventListener('click', async () => {
   renderCloudUI();
 });
 $('btnCloudLogoutPending').addEventListener('click', async () => {
-  try { await fbAuth.signOut(); toast('ออกจากระบบแล้ว — ใช้โหมดออฟไลน์ต่อได้'); } catch (e) {}
+  // บัญชีที่ยังรออนุมัติจะ push ขึ้นระบบกลางไม่ได้ ข้อมูลที่กรอกไว้จึงมีอยู่แค่ในเครื่องนี้ที่เดียว
+  // ถ้าล้างทิ้งตอนออกจากระบบจะหายถาวรโดยกู้ไม่ได้ — จึงออกจากระบบเฉย ๆ ไม่ล้าง
+  try { await fbAuth.signOut(); toast('ออกจากระบบแล้ว — ข้อมูลที่กรอกไว้ยังอยู่ในเครื่องนี้ ใช้โหมดออฟไลน์ต่อได้'); } catch (e) {}
 });
 
 /* ---------- รายการงาน (แดชบอร์ดหลังล็อกอิน) ---------- */
