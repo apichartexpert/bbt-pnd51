@@ -1676,6 +1676,15 @@ function wfActorOptions(defaultName, placeholder) {
   return opts;
 }
 function signoffFor(wf, role) { return (wf.current && wf.current[role]) ? wf.current[role] : null; }
+// ตัวตนของผู้ใช้ตามระบบกลาง — ใช้บังคับว่า "ใครกด คนนั้นเซ็น"
+// เดิมชื่อผู้เซ็นมาจาก dropdown ล้วน ๆ ไม่ผูกกับบัญชีที่ล็อกอิน staff จึงบันทึกว่า "อนุมัติโดย <ชื่อ partner>" ได้
+// (นี่คือหลักฐานการสอบทานงานยื่นภาษี ไม่ใช่แค่ข้อความประกอบ)
+function cloudSelf() {
+  if (!(cloudUser && cloudApproved)) return null;
+  const em = (cloudUser.email || '').toLowerCase();
+  const hit = (db.employees || []).find(e => (e.email || '').toLowerCase() === em);
+  return { name: (hit && hit.name) || cloudUser.email || '', email: cloudUser.email || '', uid: cloudUser.uid || '' };
+}
 
 function renderWorkflow() {
   const c = activeCompany();
@@ -1705,8 +1714,17 @@ function renderWorkflow() {
                 : wf.status === 'submitted' ? (wf.assigned.reviewer || c.reviewer)
                 : wf.status === 'checked' ? ((wf.current.reviewer && wf.current.reviewer.name) || wf.assigned.reviewer || c.reviewer)
                 : wf.status === 'reviewed' ? (wf.assigned.approver || c.approver) : '';
-  $('wfActor').innerHTML = empOptionsFor(actorCap, defName, 'เลือกผู้ดำเนินการ');
-  $('wfActor').value = defName || '';
+  const me = cloudSelf();
+  if (me) {
+    // ล็อกให้เป็นบัญชีที่ล็อกอินเท่านั้น — เลือกเซ็นแทนคนอื่นไม่ได้
+    $('wfActor').innerHTML = `<option value="${escapeHtml(me.name)}">${escapeHtml(me.name)}</option>`;
+    $('wfActor').value = me.name;
+    $('wfActor').disabled = true;
+  } else {
+    $('wfActor').disabled = false;
+    $('wfActor').innerHTML = empOptionsFor(actorCap, defName, 'เลือกผู้ดำเนินการ');
+    $('wfActor').value = defName || '';
+  }
 
   // ช่อง "ส่งให้ใคร": ขั้นร่างเลือกจากรายชื่อผู้ตรวจสอบ · ขั้น "ตรวจแล้ว" เลือกจากรายชื่อผู้อนุมัติ
   // (ขั้นรอตรวจไม่ต้องเลือก — ผู้ตรวจกด "ผ่านการตรวจ" ก่อน แล้วค่อยเลือกผู้อนุมัติเป็นอีกจังหวะ)
@@ -1726,9 +1744,11 @@ function renderWorkflow() {
   } else {
     sendField.style.display = 'none';
   }
-  $('wfActorHint').textContent = stepRole
-    ? (defName ? `— ขั้นนี้: ${stepRole} = ${defName}` : `— ขั้นนี้: ${stepRole} (ยังไม่ได้กำหนดใน Section 1)`)
-    : '';
+  $('wfActorHint').textContent = me
+    ? `— ลงชื่อในนามบัญชีที่ล็อกอิน: ${me.name}${stepRole ? ' · ขั้นนี้ต้องเป็น ' + stepRole : ''}`
+    : (stepRole
+        ? (defName ? `— ขั้นนี้: ${stepRole} = ${defName}` : `— ขั้นนี้: ${stepRole} (ยังไม่ได้กำหนดใน Section 1)`)
+        : '');
 
   // สิทธิ์ตามบทบาทบัญชีที่ล็อกอิน (ถ้าไม่ได้ล็อกอิน = โหมดออฟไลน์ ไม่จำกัด):
   // staff = ส่งตรวจ · manager = ส่งตรวจ+ตรวจสอบ · partner = ทุกหน้าที่ (จัดทำ/ตรวจสอบ/อนุมัติ)
@@ -1777,7 +1797,7 @@ function renderWorkflow() {
     wrap.innerHTML = wf.log.slice().reverse().map(e => {
       const a = WF_ACTION[e.action] || { label: e.action, role: '', ico: 'sub', icon: '•' };
       return `<div class="wf-log-item"><div class="ico ${a.ico}">${a.icon}</div><div class="body">`
-        + `<div><span class="who">${escapeHtml(e.name || '-')}</span> <span class="meta">— ${a.role} · ${a.label}${e.target ? ' → ส่งให้ ' + escapeHtml(e.target) : ''}</span></div>`
+        + `<div><span class="who">${escapeHtml(e.name || '-')}</span>${e.by && e.by.email ? ` <span class="meta">&lt;${escapeHtml(e.by.email)}&gt;</span>` : ''} <span class="meta">— ${a.role} · ${a.label}${e.target ? ' → ส่งให้ ' + escapeHtml(e.target) : ''}</span></div>`
         + `<div class="meta">${fmtDateTime(e.at)}</div>`
         + (e.note ? `<div class="nt">“${escapeHtml(e.note)}”</div>` : '')
         + `</div></div>`;
@@ -1788,15 +1808,33 @@ function renderWorkflow() {
   renderFilingStep();
 }
 
+// สิทธิ์ตามบทบาทของการกระทำแต่ละอย่าง (ใช้ทั้งตอนวาดปุ่มและตอนสั่งงานจริง)
+function wfActionAllowed(action) {
+  if (!cloudUser || !cloudApproved || !cloudRole) return true;   // โหมดออฟไลน์ ไม่จำกัด
+  if (action === 'submit') return true;
+  if (action === 'review-pass' || action === 'send-approve' || action === 'review-reject') {
+    return cloudRole === 'manager' || cloudRole === 'partner';
+  }
+  if (action === 'approve' || action === 'approve-reject' || action === 'reopen') return cloudRole === 'partner';
+  return true;
+}
 window.wfDo = function (action) {
   const c = activeCompany();
   const wf = ensureWorkflow(c);
   if (!wf.current) wf.current = {};
   if (!wf.assigned) wf.assigned = {};
-  const name = $('wfActor').value;
+  // ตรวจสิทธิ์ตรงนี้ด้วย ไม่ใช่แค่ตอนวาดปุ่ม — wfDo เรียกจาก console ได้
+  // (ยังไม่ใช่ความปลอดภัยจริง ตัวกั้นจริงคือ Firestore Rules ฝั่งเซิร์ฟเวอร์)
+  if (!wfActionAllowed(action)) {
+    toast(`บทบาทของคุณ (${CLOUD_ROLE_LABELS[cloudRole] || cloudRole}) ไม่มีสิทธิ์ทำรายการนี้`);
+    return;
+  }
+  const me = cloudSelf();
+  const name = me ? me.name : $('wfActor').value;   // เชื่อมต่อระบบกลาง = เซ็นในนามบัญชีที่ล็อกอินเสมอ
   const note = $('wfNote').value.trim();
   if (action !== 'reopen' && !name) { toast('กรุณาเลือกผู้ดำเนินการก่อน'); return; }
   const at = new Date().toISOString();
+  const by = me ? { email: me.email, uid: me.uid } : undefined;   // ติดตัวตนไว้กับลายเซ็นเพื่อตรวจสอบย้อนหลัง
   let target = '';
 
   if (action === 'submit') {
@@ -1809,11 +1847,11 @@ window.wfDo = function (action) {
     wf.status = 'submitted';
     wf.returned = false;
     wf.assigned.reviewer = target;
-    wf.current = { preparer: { name, at } };
+    wf.current = { preparer: { name, at, by } };
   } else if (action === 'review-pass') {
     // จังหวะที่ 1 ของผู้ตรวจ: บันทึกว่าตรวจผ่าน (เซ็นชื่อ) — ยังไม่ส่งให้ผู้อนุมัติ
     wf.status = 'checked';
-    wf.current.reviewer = { name, at };
+    wf.current.reviewer = { name, at, by };
   } else if (action === 'send-approve') {
     // จังหวะที่ 2 ของผู้ตรวจ: เลือกผู้อนุมัติแล้วส่งต่อ
     target = $('wfSendTo').value;
@@ -1821,13 +1859,13 @@ window.wfDo = function (action) {
     wf.status = 'reviewed';
     wf.assigned.approver = target;
   } else if (action === 'approve') {
-    wf.status = 'approved'; wf.current.approver = { name, at };
+    wf.status = 'approved'; wf.current.approver = { name, at, by };
   } else if (action === 'review-reject' || action === 'approve-reject' || action === 'reopen') {
     wf.status = 'draft'; wf.current = {}; wf.assigned = {};   // ล้างลายเซ็น+ผู้รับงานรอบปัจจุบัน (log ยังคงอยู่)
     wf.filing = null; wf.payment = null;   // ล้างบันทึกยื่นแบบ/ชำระเงินด้วย (ไฟล์แนบยังอยู่ที่เอกสารแนบ)
     wf.returned = (action !== 'reopen');   // ตีกลับ = สถานะ "ถูกตีกลับให้แก้ไข" · เปิดใหม่ = ร่างปกติ
   }
-  wf.log.push({ action, name: name || '—', note, at, target: target || undefined });
+  wf.log.push({ action, name: name || '—', note, at, target: target || undefined, by });
   $('wfNote').value = '';
   saveDB();
   renderWorkflow();
@@ -2102,7 +2140,9 @@ function pndSummaryHtml(r) {
   const stt = WF_STATUS[wf.status] || WF_STATUS.draft;
   const signBox = (roleKey, roleLabel, assignedName) => {
     const s = signoffFor(wf, roleKey);
-    if (s) return `<div class="sign-box"><div class="sig-line"></div>${roleLabel}<br><span class="sign-name">${escapeHtml(s.name)}</span><br><span class="signed-tag">✓ เซ็นแล้ว</span> <span class="sign-date">${fmtDateTime(s.at)}</span></div>`;
+    if (s) return `<div class="sign-box"><div class="sig-line"></div>${roleLabel}<br><span class="sign-name">${escapeHtml(s.name)}</span>`
+      + (s.by && s.by.email ? `<br><span class="sign-date">${escapeHtml(s.by.email)}</span>` : '')
+      + `<br><span class="signed-tag">✓ เซ็นแล้ว</span> <span class="sign-date">${fmtDateTime(s.at)}</span></div>`;
     return `<div class="sign-box"><div class="sig-line"></div>${roleLabel}<br>${escapeHtml(assignedName || '')}</div>`;
   };
   return `
@@ -2470,7 +2510,9 @@ function buildPrintReport() {
 function printSign(roleKey, roleLabel, assignedName, wf) {
   const s = signoffFor(wf, roleKey);
   const top = s
-    ? `<b>${escapeHtml(s.name)}</b><span style="color:#1e7d43">✓ เซ็นแล้ว ${fmtDateTime(s.at)}</span>`
+    ? `<b>${escapeHtml(s.name)}</b>`
+      + (s.by && s.by.email ? `<span style="color:#666">${escapeHtml(s.by.email)}</span>` : '')
+      + `<span style="color:#1e7d43">✓ เซ็นแล้ว ${fmtDateTime(s.at)}</span>`
     : (assignedName ? escapeHtml(assignedName) : '&nbsp;');
   return `<div class="line"><div class="sig-top">${top}</div><hr>${roleLabel}</div>`;
 }
@@ -2573,7 +2615,7 @@ window.fpSaveFiling = async function () {
   await refreshAttachments();
   const at = new Date().toISOString();
   const netPay = Math.max((wf.snapshot && wf.snapshot.netPay) || 0, 0);
-  wf.filing = { date, by, at, fileName: f.name };
+  wf.filing = { date, by, at, fileName: f.name, byAccount: (cloudSelf() || {}).email || '' };
   wf.status = netPay > 0 ? 'filed' : 'completed';
   wf.log.push({ action: 'file', name: by, at, note: 'ยื่นเมื่อ ' + date + ' · ' + f.name });
   saveDB(); renderWorkflow();
@@ -2593,7 +2635,7 @@ window.fpSavePayment = async function () {
   if (!rec) return;
   await refreshAttachments();
   const at = new Date().toISOString();
-  wf.payment = { date, by, at, fileName: f.name };
+  wf.payment = { date, by, at, fileName: f.name, byAccount: (cloudSelf() || {}).email || '' };
   wf.status = 'completed';
   wf.log.push({ action: 'pay', name: by, at, note: 'ชำระเมื่อ ' + date + ' · ' + f.name });
   saveDB(); renderWorkflow();
@@ -3032,12 +3074,35 @@ function getCloudConfig() {
 function parseConfigText(text) {
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('ไม่พบข้อมูล config ในข้อความที่วาง');
-  let t = m[0]
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
-    .replace(/'/g, '"')
-    .replace(/,\s*\}/g, '}');
-  const cfg = JSON.parse(t);
+  // เดินอ่านทีละตัวอักษร โดยรู้ว่าตอนนี้อยู่ในเครื่องหมายคำพูดหรือไม่
+  // — เดิมใช้ replace ล้วน ๆ จึงกิน // ที่อยู่กลาง URL (databaseURL: "https://xxx.firebaseio.com")
+  //   ทำให้ค่าขาดกลางคันและ JSON.parse ล้มพร้อมข้อความภาษาอังกฤษที่ผู้ใช้อ่านไม่รู้เรื่อง
+  const src = m[0];
+  let out = '', quote = null;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i], next = src[i + 1];
+    if (quote) {
+      if (ch === '\\') {
+        // \' ไม่ใช่ escape ที่ JSON รู้จัก — ในสตริงเดี่ยวต้องคลายเป็น ' ธรรมดา ส่วนในสตริงคู่ต้องคงเป็น \"
+        if (next === quote) out += (quote === '"' ? '\\"' : "'");
+        else out += ch + (next || '');
+        i++; continue;
+      }
+      if (ch === quote) { out += '"'; quote = null; continue; }
+      out += (ch === '"') ? '\\"' : ch;   // ' ... " ... ' ต้องหนีให้ถูกเมื่อแปลงเป็น JSON
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; out += '"'; continue; }
+    if (ch === '/' && next === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
+    if (ch === '/' && next === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i++; continue; }
+    out += ch;
+  }
+  const t = out
+    .replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/g, '$1"$2":')
+    .replace(/,\s*([}\]])/g, '$1');
+  let cfg;
+  try { cfg = JSON.parse(t); }
+  catch (e) { throw new Error('อ่าน config ไม่ได้ — วางเฉพาะส่วน { ... } ที่ก๊อบจาก Firebase Console'); }
   if (!cfg.apiKey || !cfg.projectId) throw new Error('config ไม่ครบ — ต้องมี apiKey และ projectId');
   return cfg;
 }
@@ -3141,6 +3206,18 @@ async function loadEmployeesFromUsers() {
   }
 }
 
+// การตัดสินว่าเครื่องไหน "ใหม่กว่า" ใช้ Date.now() ของเครื่องที่เขียน
+// ถ้านาฬิกาเครื่องนี้เพี้ยน งานที่แก้ล่าสุดอาจแพ้ให้ของเก่าโดยไม่มีสัญญาณอะไรเลย — อย่างน้อยต้องเตือน
+let clockSkewWarned = false;
+function checkClockSkew(remoteStamp) {
+  if (clockSkewWarned || !remoteStamp) return;
+  const skew = Date.now() - remoteStamp;
+  // ค่าที่อ่านได้คือเวลาที่เครื่องอื่นเขียนล่าสุด จึงเตือนเฉพาะกรณีที่นาฬิกาเราช้ากว่าเห็นได้ชัด (> 5 นาที)
+  if (skew < -5 * 60 * 1000) {
+    clockSkewWarned = true;
+    toast('⚠ นาฬิกาเครื่องนี้ช้ากว่าเครื่องอื่นในระบบมาก — การซิงค์อาจตัดสินผิดพลาด โปรดตั้งเวลาอัตโนมัติ');
+  }
+}
 async function startSync() {
   if (!fbDb || !cloudUser || !cloudApproved) return;
   try {
@@ -3149,6 +3226,7 @@ async function startSync() {
       const delDoc = await fbDb.collection('meta').doc('deleted').get();
       const dd = delDoc.exists ? (delDoc.data() || {}) : {};
       mergeTombs(dd.tombs, dd.ids);
+      checkClockSkew(dd._syncAt);
     } catch (e) { /* ไม่มีเอกสารนี้ก็ไม่เป็นไร */ }
     // 1) ดึงข้อมูลส่วนกลางมารวมกับในเครื่อง (ใครใหม่กว่าใช้อันนั้น)
     const snap = await fbDb.collection('companies').get();
