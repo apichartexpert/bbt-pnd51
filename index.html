@@ -2298,12 +2298,12 @@ function buildPrintReport() {
     <div class="sub-title">เอกสารประกอบการคำนวณภายใน — ไม่ใช่แบบแสดงรายการของกรมสรรพากร</div>
     <div class="hdr">
       <div class="h-l">
-        <b>${c.name || '-'}</b>${c.jobCode ? ' &nbsp;(Job Code: ' + c.jobCode + ')' : ''}<br>
-        <span class="lbl">เลขประจำตัวผู้เสียภาษี</span> ${c.taxId || '-'}
+        <b>${escapeHtml(c.name || '-')}</b>${c.jobCode ? ' &nbsp;(Job Code: ' + escapeHtml(c.jobCode) + ')' : ''}<br>
+        <span class="lbl">เลขประจำตัวผู้เสียภาษี</span> ${escapeHtml(c.taxId || '-')}
       </div>
       <div class="h-c">
         <span class="lbl">รอบระยะเวลาบัญชี (ปี พ.ศ.)</span><br>
-        <b>${c.year}</b>${c.yearEnd ? ' (สิ้นรอบ ' + c.yearEnd + ')' : ''}<br>
+        <b>${escapeHtml(String(c.year))}</b>${c.yearEnd ? ' (สิ้นรอบ ' + escapeHtml(c.yearEnd) + ')' : ''}<br>
         ${r.entityType === 'sme' ? 'SME (อัตราขั้นบันได)' : 'บริษัททั่วไป (20%)'}
       </div>
       <div class="h-r">
