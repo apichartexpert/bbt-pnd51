@@ -64,15 +64,28 @@ check('partial import defaults entityType=sme', partial.entityType === 'sme', pa
 check('partial import initializes lossCarry array', partial.lossCarry === true);
 check('partial import initializes history array', partial.history === true);
 
-// 6. นำเข้าบริษัทที่เคยลบ → ยกเลิก tombstone
+// 6. นำเข้าบริษัทที่เคยลบ → ยกเลิก tombstone (รูปแบบใหม่ db.tombs: undel ใหม่กว่า del = ไม่ถูกลบ)
 const tomb = await page.evaluate(() => {
   db.companies = [db.companies[0]]; db.activeId = db.companies[0].id;
-  db.deletedIds = ['ghost1'];
+  markDeleted('ghost1');
+  const wasDeleted = isDeleted('ghost1');
   applyImportedData({ companies: [{ id: 'ghost1', name: 'คืนชีพ', taxId: '111', year: 2568 }] });
-  return { stillDeleted: db.deletedIds.includes('ghost1'), present: db.companies.some(x => x.id === 'ghost1') };
+  return { wasDeleted, stillDeleted: isDeleted('ghost1'), present: db.companies.some(x => x.id === 'ghost1') };
 });
+check('tombstone marked before import', tomb.wasDeleted === true);
 check('re-import lifts tombstone', tomb.stillDeleted === false, `stillDeleted=${tomb.stillDeleted}`);
 check('re-imported company present', tomb.present === true);
+
+// 7. ไฟล์พนักงานล้วน (companies เป็นรายการว่าง) ต้องนำเข้าได้ ไม่ใช่ throw "ไฟล์ไม่ถูกต้อง"
+const empOnly = await page.evaluate(() => {
+  db.employees = [];
+  try {
+    applyImportedData({ companies: [], employees: [{ name: 'พนักงานเดี่ยว', role: 'Junior' }] });
+    return { ok: true, count: db.employees.filter(e => e.name === 'พนักงานเดี่ยว').length };
+  } catch (e) { return { ok: false, err: e.message }; }
+});
+check('employees-only import succeeds', empOnly.ok === true, empOnly.err || '');
+check('employees-only import adds the employee', empOnly.count === 1, `${empOnly.count}`);
 
 check('no page errors during import tests', errors.length === 0, errors.join(' | '));
 
