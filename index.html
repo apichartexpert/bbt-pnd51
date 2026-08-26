@@ -409,8 +409,8 @@
       <span class="hint" id="cloudInfo"></span>
     </div>
     <div id="cloudSetup" style="display:none">
-      <p class="note" style="margin-top:0">วางค่า <b>firebaseConfig</b> ที่ได้จากการสร้างโปรเจกต์ Firebase ของสำนักงาน (ทำครั้งเดียวต่อเครื่อง) — ยังไม่มี? ดูขั้นตอนสร้างในสมุด HANDOFF.md หรือถาม Claude</p>
-      <textarea id="cloudCfgText" rows="5" style="width:100%; font-family:monospace; font-size:.85rem" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", ... };'></textarea>
+      <p class="note" style="margin-top:0">วางค่า <b>Neon</b> ของสำนักงาน (ทำครั้งเดียวต่อเครื่อง) — เอามาจาก Neon Console: <b>Data API URL</b> + <b>Neon Auth</b> (Project ID / Publishable Client Key) · ดูขั้นตอนใน neon/SETUP.md</p>
+      <textarea id="cloudCfgText" rows="5" style="width:100%; font-family:monospace; font-size:.85rem" placeholder='{ "dataApiUrl": "https://xxxx.apirest.region.aws.neon.tech", "authProjectId": "...", "authPublishableKey": "..." }'></textarea>
       <div class="btn-row">
         <button class="btn-primary btn-sm" id="btnCloudSaveCfg" type="button">บันทึกการตั้งค่า</button>
       </div>
