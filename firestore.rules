@@ -1,0 +1,106 @@
+rules_version = '2';
+
+// ============================================================================
+//  Security Rules สำหรับระบบกลาง ภ.ง.ด.51 (โปรเจกต์ bbt-pnd51)
+//
+//  สำคัญ: แอปเป็นหน้าเว็บล้วน โค้ดทั้งหมดอยู่ในเบราว์เซอร์ของผู้ใช้
+//  การเช็คสิทธิ์ในหน้าเว็บ (ซ่อนปุ่ม / ตัวแปร cloudRole) เป็นเพียงความสะดวกในการใช้งาน
+//  ไม่ใช่ระบบความปลอดภัย — ใครก็เปิด console แล้วเรียก Firestore ตรง ๆ ได้
+//  ไฟล์นี้คือด่านเดียวที่กันได้จริง
+//
+//  วิธีติดตั้ง:
+//    firebase deploy --only firestore:rules
+//  หรือวางเนื้อหาไฟล์นี้ที่ Firebase Console → Firestore Database → Rules → Publish
+//
+//  หลังติดตั้ง ควรปิดการสมัครเองด้วย ถ้าไม่ต้องการให้คนนอกสร้างบัญชีได้:
+//    Firebase Console → Authentication → Sign-in method → Email/Password
+//    → ปิด "Enable create (sign-up)" แล้วให้ partner สร้างบัญชีให้พนักงานเองใน Console
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- ตัวช่วย ----------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userExists() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // อนุมัติแล้วเท่านั้นจึงจะแตะข้อมูลบริษัทได้ และต้องไม่ถูกปฏิเสธ
+    function approved() {
+      return userExists()
+        && userDoc().approved == true
+        && userDoc().rejected != true;
+    }
+
+    function roleIs(r) {
+      return approved() && userDoc().role == r;
+    }
+
+    function isPartner() {
+      return roleIs('partner');
+    }
+
+    // ---------- users: บัญชีผู้ใช้และสถานะอนุมัติ ----------
+    match /users/{uid} {
+
+      // อ่านได้เฉพาะเอกสารของตัวเอง หรือผู้ที่อนุมัติแล้ว (แอปต้องดึงรายชื่อมาเลือกผู้จัดทำ/ผู้ตรวจ/ผู้อนุมัติ)
+      allow get, list: if signedIn() && (request.auth.uid == uid || approved());
+
+      // สร้างคำขอของตัวเองได้ครั้งเดียว และ "ต้อง" เป็นสถานะรออนุมัติเสมอ
+      // — จุดนี้คือช่องโหว่ที่อันตรายที่สุดถ้าปล่อยหลวม: ถ้าให้เขียน approved/role ของตัวเองได้
+      //   ใครสมัครเข้ามาก็ตั้งตัวเองเป็น partner แล้วเห็นข้อมูลลูกค้าทั้งสำนักงานทันที
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.approved == false
+        && request.resource.data.rejected != true
+        && request.resource.data.role == 'staff';
+
+      // เจ้าของแก้ได้เฉพาะชื่อ/อีเมลของตัวเอง — ห้ามแตะ approved, role, rejected เด็ดขาด
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.approved == resource.data.approved
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.get('rejected', false) == resource.data.get('rejected', false);
+
+      // partner เท่านั้นที่อนุมัติ / เปลี่ยนบทบาท / ปฏิเสธได้ (และลบบัญชีได้)
+      allow update, delete: if isPartner();
+    }
+
+    // ---------- companies: ข้อมูลงานลูกค้า ----------
+    // ไม่มีการแบ่งเจ้าของรายเอกสาร ทุกคนที่อนุมัติแล้วเห็นทั้งหมด (ตามรูปแบบการทำงานของสำนักงาน)
+    // ถ้าต้องการจำกัดเป็นรายทีมในอนาคต ต้องเพิ่มฟิลด์ ownerUid/teamId ในเอกสารก่อน
+    match /companies/{companyId} {
+      allow read: if approved();
+      allow create, update: if approved();
+
+      // ลบข้อมูลลูกค้าเป็นการกระทำที่กู้คืนยาก — จำกัดไว้ที่ manager ขึ้นไป
+      allow delete: if roleIs('manager') || isPartner();
+    }
+
+    // ---------- meta: รายชื่อบริษัทที่ถูกลบ (tombstone) ----------
+    // เอกสารนี้กระทบทุกเครื่องพร้อมกัน ถ้าถูกเขียนทับด้วยรายการว่างจะทำให้บริษัทที่ลบแล้วฟื้นกลับมาทั้งสำนักงาน
+    match /meta/deleted {
+      allow read: if approved();
+      allow write: if roleIs('manager') || isPartner();
+    }
+
+    // meta อื่น ๆ: อ่านได้ถ้าอนุมัติแล้ว เขียนได้เฉพาะ partner
+    match /meta/{docId} {
+      allow read: if approved();
+      allow write: if isPartner();
+    }
+
+    // ---------- ปฏิเสธทุกอย่างที่ไม่ได้ระบุไว้ข้างบน ----------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,2 +1,4 @@
 *.xlsx
 *.xls
+node_modules/
+package-lock.json
