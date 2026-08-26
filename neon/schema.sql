@@ -93,7 +93,17 @@ create table if not exists company (
   entity_type  text not null default 'sme'
                check (entity_type in ('sme','general')),
   status       text not null default 'draft',
-  data         jsonb not null default '{}'::jsonb,   -- est, tb, lossCarry, priorYearTax, history, workflow
+  preparer     text not null default '',
+  reviewer     text not null default '',
+  approver     text not null default '',
+  -- ส่วนที่ยืดหยุ่น แยกเป็นคอลัมน์ JSONB คนละช่อง เพื่อให้ PATCH แก้เฉพาะช่องที่เปลี่ยน
+  -- คนละคนแก้คนละส่วนพร้อมกัน (ตัวเลข vs ลายเซ็นอนุมัติ) จึงไม่ทับกัน — field-merge ระดับคอลัมน์ ฝั่ง server
+  est            jsonb not null default '{}'::jsonb,
+  tb             jsonb not null default '{}'::jsonb,   -- งบทดลอง A/B/C ที่นำเข้า
+  history        jsonb not null default '[]'::jsonb,
+  loss_carry     jsonb not null default '[0,0,0,0,0]'::jsonb,
+  prior_year_tax jsonb not null default '{}'::jsonb,
+  workflow       jsonb not null default '{}'::jsonb,
   created_by   text,
   updated_by   text,
   created_at   timestamptz not null default now(),
