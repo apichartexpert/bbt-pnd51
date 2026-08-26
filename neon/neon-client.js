@@ -82,6 +82,13 @@
     'entity_type', 'status', 'preparer', 'reviewer', 'approver',
     'est', 'tb', 'history', 'loss_carry', 'prior_year_tax', 'workflow'];
 
+  // เทียบค่าแบบไม่สนลำดับคีย์ของอ็อบเจกต์ — สำคัญมาก เพราะ Postgres คืนค่า jsonb โดย "เรียงคีย์ใหม่"
+  // ถ้าเทียบด้วย JSON.stringify ตรง ๆ จะเห็นเป็น "เปลี่ยน" ทั้งที่เนื้อหาเท่าเดิม แล้วไป PATCH ทับงานคนอื่น
+  function stable(v) {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
+    if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+  }
   // เทียบแถวใหม่กับแถวที่เซิร์ฟเวอร์มีอยู่ คืนเฉพาะคอลัมน์ที่ต่างจริง
   // → PATCH แค่คอลัมน์ที่เปลี่ยน ทำให้คนละคนแก้คนละส่วนพร้อมกันไม่ทับกัน
   function changedColumns(newRow, prevRow) {
@@ -89,7 +96,7 @@
     const patch = {};
     let n = 0;
     for (const k of WRITABLE_COLS) {
-      if (JSON.stringify(newRow[k]) !== JSON.stringify(prevRow[k])) { patch[k] = newRow[k]; n++; }
+      if (stable(newRow[k]) !== stable(prevRow[k])) { patch[k] = newRow[k]; n++; }
     }
     return n ? patch : null;                          // null = ไม่มีอะไรเปลี่ยน ไม่ต้องส่ง
   }

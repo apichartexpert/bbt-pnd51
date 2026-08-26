@@ -809,6 +809,289 @@ parse_Primary(n.content)}catch(l){}a="/EncryptionInfo";n=Qe.find(e,a);if(!n||!n.
 
 </script>
 <script>
+/* ==== inlined neon/neon-client.js (ชั้นเชื่อมต่อ Neon) ==== */
+/* ============================================================================
+ *  neon-client.js — ชั้นเชื่อมต่อ "ระบบกลาง" กับ Neon (แทนที่ Firebase/Firestore)
+ *
+ *  ใช้ได้ทั้งในเบราว์เซอร์ (แนบเป็น window.NeonSync) และใน Node (module.exports)
+ *  เพื่อให้ทดสอบตรรกะ mapping/sync นอกเบราว์เซอร์ได้
+ *
+ *  ประกอบด้วย 3 ส่วน:
+ *    1) mapping     — แปลงระหว่าง "อ็อบเจกต์บริษัทของแอป" กับ "แถวในตาราง company"
+ *    2) data (REST) — คุยกับ Neon Data API (PostgREST) โดยแนบ JWT ที่ได้จาก auth
+ *    3) auth        — ล็อกอิน/สมัคร/รีเฟรชโทเคน ผ่าน Neon Auth (Stack Auth) REST
+ *
+ *  ความปลอดภัยทั้งหมดอยู่ที่ RLS ใน neon/schema.sql — ชั้นนี้แค่เรียก API ให้ถูก
+ * ========================================================================== */
+(function (root, factory) {
+  const mod = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = mod;      // Node
+  else root.NeonSync = mod;                                                        // browser
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // ---------- 1) mapping: app company object <-> DB row ----------
+  const asObj = v => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  const asArr = v => Array.isArray(v) ? v : null;
+
+  function companyToRow(c) {
+    return {
+      id: c.id,
+      name: c.name || '',
+      tax_id: c.taxId || '',
+      fiscal_year: parseInt(c.year, 10) || null,
+      job_code: c.jobCode || '',
+      year_end: c.yearEnd || '',
+      entity_type: c.entityType === 'general' ? 'general' : 'sme',
+      status: (c.workflow && c.workflow.status) || 'draft',
+      preparer: c.preparer || '',
+      reviewer: c.reviewer || '',
+      approver: c.approver || '',
+      est: asObj(c.est),
+      tb: asObj(c.tb),
+      history: asArr(c.history) || [],
+      loss_carry: asArr(c.lossCarry) || [0, 0, 0, 0, 0],
+      prior_year_tax: asObj(c.priorYearTax),
+      workflow: asObj(c.workflow)
+      // ห้ามส่ง created_/updated_/timestamps — เซิร์ฟเวอร์คุมเองผ่าน trigger
+    };
+  }
+
+  function rowToCompany(r) {
+    const c = {
+      id: r.id,
+      name: r.name || '',
+      taxId: r.tax_id || '',
+      year: r.fiscal_year || '',
+      jobCode: r.job_code || '',
+      yearEnd: r.year_end || '',
+      entityType: r.entity_type === 'general' ? 'general' : 'sme',
+      preparer: r.preparer || '',
+      reviewer: r.reviewer || '',
+      approver: r.approver || '',
+      est: asObj(r.est),
+      tb: asObj(r.tb),
+      history: asArr(r.history) || [],
+      lossCarry: asArr(r.loss_carry) || [0, 0, 0, 0, 0],
+      priorYearTax: asObj(r.prior_year_tax),
+      workflow: asObj(r.workflow),
+      // เมตาการซิงค์: ใช้เวลาเซิร์ฟเวอร์ (updated_at) แทนนาฬิกาเครื่อง — ไม่มีปัญหานาฬิกาเพี้ยนอีก
+      _syncAt: r.updated_at ? Date.parse(r.updated_at) : 0,
+      _deletedAt: r.deleted_at ? Date.parse(r.deleted_at) : 0,
+      _undeletedAt: r.undeleted_at ? Date.parse(r.undeleted_at) : 0
+    };
+    return c;
+  }
+  // บริษัทถูกลบอยู่ไหม (soft delete) — แทน tombstone list ทั้งชุด
+  function rowIsDeleted(r) {
+    const d = r.deleted_at ? Date.parse(r.deleted_at) : 0;
+    const u = r.undeleted_at ? Date.parse(r.undeleted_at) : 0;
+    return d > 0 && d > u;
+  }
+
+  // คอลัมน์ที่ client มีสิทธิ์เขียน (ใช้ตอนหาว่าอะไรเปลี่ยนเพื่อ PATCH เฉพาะช่องนั้น)
+  const WRITABLE_COLS = ['name', 'tax_id', 'fiscal_year', 'job_code', 'year_end',
+    'entity_type', 'status', 'preparer', 'reviewer', 'approver',
+    'est', 'tb', 'history', 'loss_carry', 'prior_year_tax', 'workflow'];
+
+  // เทียบค่าแบบไม่สนลำดับคีย์ของอ็อบเจกต์ — สำคัญมาก เพราะ Postgres คืนค่า jsonb โดย "เรียงคีย์ใหม่"
+  // ถ้าเทียบด้วย JSON.stringify ตรง ๆ จะเห็นเป็น "เปลี่ยน" ทั้งที่เนื้อหาเท่าเดิม แล้วไป PATCH ทับงานคนอื่น
+  function stable(v) {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
+    if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+  }
+  // เทียบแถวใหม่กับแถวที่เซิร์ฟเวอร์มีอยู่ คืนเฉพาะคอลัมน์ที่ต่างจริง
+  // → PATCH แค่คอลัมน์ที่เปลี่ยน ทำให้คนละคนแก้คนละส่วนพร้อมกันไม่ทับกัน
+  function changedColumns(newRow, prevRow) {
+    if (!prevRow) return null;                       // ไม่มีฐานเทียบ → เขียนทั้งแถว (upsert)
+    const patch = {};
+    let n = 0;
+    for (const k of WRITABLE_COLS) {
+      if (stable(newRow[k]) !== stable(prevRow[k])) { patch[k] = newRow[k]; n++; }
+    }
+    return n ? patch : null;                          // null = ไม่มีอะไรเปลี่ยน ไม่ต้องส่ง
+  }
+
+  // ---------- 2) data: Neon Data API (PostgREST) ----------
+  // cfg = { dataApiUrl, getToken: async () => '<jwt>' | null }
+  function makeData(cfg) {
+    const base = String(cfg.dataApiUrl || '').replace(/\/+$/, '');
+    async function api(method, path, { body, prefer } = {}) {
+      const token = cfg.getToken ? await cfg.getToken() : null;
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = 'Bearer ' + token;
+      if (prefer) headers.Prefer = prefer;
+      const res = await fetch(base + path, {
+        method, headers, body: body !== undefined ? JSON.stringify(body) : undefined
+      });
+      const text = await res.text();
+      let data = null;
+      if (text) { try { data = JSON.parse(text); } catch (e) { data = text; } }
+      if (!res.ok) {
+        const msg = (data && data.message) || res.status + ' ' + res.statusText;
+        const err = new Error(msg); err.status = res.status; err.body = data; throw err;
+      }
+      return data;
+    }
+
+    return {
+      _api: api,
+      // ---- companies ----
+      async listCompanies() {
+        const rows = await api('GET', '/company?select=*');
+        return (rows || []).map(r => ({ company: rowToCompany(r), row: r, deleted: rowIsDeleted(r) }));
+      },
+      // upsert แบบ field-merge: ใหม่ = POST ทั้งแถว · มีอยู่แล้ว = PATCH เฉพาะช่องที่เปลี่ยน
+      async saveCompany(company, prevRow) {
+        const newRow = companyToRow(company);
+        if (!prevRow) {
+          const out = await api('POST', '/company', {
+            body: newRow, prefer: 'return=representation,resolution=merge-duplicates'
+          });
+          return Array.isArray(out) ? out[0] : out;
+        }
+        const patch = changedColumns(newRow, prevRow);
+        if (!patch) return prevRow;                    // ไม่มีอะไรเปลี่ยน
+        const out = await api('PATCH', '/company?id=eq.' + encodeURIComponent(company.id),
+          { body: patch, prefer: 'return=representation' });
+        return Array.isArray(out) ? out[0] : out;
+      },
+      async softDelete(id) {
+        const out = await api('PATCH', '/company?id=eq.' + encodeURIComponent(id),
+          { body: { deleted_at: new Date().toISOString() }, prefer: 'return=representation' });
+        return Array.isArray(out) ? out[0] : out;
+      },
+      async undelete(id) {
+        const out = await api('PATCH', '/company?id=eq.' + encodeURIComponent(id),
+          { body: { undeleted_at: new Date().toISOString() }, prefer: 'return=representation' });
+        return Array.isArray(out) ? out[0] : out;
+      },
+      async hardDelete(id) {                            // manager+ เท่านั้น (RLS คุม)
+        await api('DELETE', '/company?id=eq.' + encodeURIComponent(id));
+      },
+      // ---- users / โปรไฟล์ + อนุมัติ ----
+      async listApprovedUsers() {
+        return await api('GET', '/app_user?approved=eq.true&select=uid,email,name,role');
+      },
+      async listPendingUsers() {
+        return await api('GET', '/app_user?approved=eq.false&rejected=eq.false&select=uid,email,name');
+      },
+      async getMyProfile(uid) {
+        const r = await api('GET', '/app_user?uid=eq.' + encodeURIComponent(uid) + '&select=*');
+        return (r && r[0]) || null;
+      },
+      // สร้างคำขอรออนุมัติของตัวเอง (RLS บังคับ approved=false, role=staff อยู่แล้ว)
+      async createOwnProfile(uid, email, name) {
+        try {
+          await api('POST', '/app_user', {
+            body: { uid, email: email || '', name: name || '', approved: false, rejected: false, role: 'staff' },
+            prefer: 'resolution=ignore-duplicates'
+          });
+        } catch (e) { if (e.status !== 409) throw e; }
+      },
+      async approveUser(uid, role, byEmail) {
+        await api('PATCH', '/app_user?uid=eq.' + encodeURIComponent(uid),
+          { body: { approved: true, rejected: false, role, approved_by: byEmail || '', approved_at: new Date().toISOString() } });
+      },
+      async setUserRole(uid, role) {
+        await api('PATCH', '/app_user?uid=eq.' + encodeURIComponent(uid), { body: { role } });
+      },
+      async rejectUser(uid, byEmail) {
+        await api('PATCH', '/app_user?uid=eq.' + encodeURIComponent(uid),
+          { body: { approved: false, rejected: true, role: 'staff' } });
+      }
+    };
+  }
+
+  // ---------- 3) auth: Neon Auth (Stack Auth) REST ----------
+  // authCfg = { authBaseUrl, projectId, publishableKey }
+  //   ค่าเหล่านี้เอามาจากแดชบอร์ด Neon → Auth (Neon Auth ใช้ Stack Auth อยู่เบื้องหลัง)
+  //   เก็บ access/refresh token ไว้ใน localStorage แล้วรีเฟรชอัตโนมัติเมื่อใกล้หมดอายุ
+  function makeAuth(authCfg, storage) {
+    const base = String(authCfg.authBaseUrl || 'https://api.stack-auth.com').replace(/\/+$/, '');
+    const store = storage || (typeof localStorage !== 'undefined' ? localStorage : memStore());
+    const KEY = 'neon_auth_tokens_v1';
+    const headersBase = () => ({
+      'Content-Type': 'application/json',
+      'X-Stack-Access-Type': 'client',
+      'X-Stack-Project-Id': authCfg.projectId,
+      'X-Stack-Publishable-Client-Key': authCfg.publishableKey
+    });
+    const getTokens = () => { try { return JSON.parse(store.getItem(KEY) || 'null'); } catch (e) { return null; } };
+    const setTokens = t => { try { t ? store.setItem(KEY, JSON.stringify(t)) : store.removeItem(KEY); } catch (e) {} };
+
+    async function call(path, body, extraHeaders) {
+      const res = await fetch(base + path, {
+        method: 'POST',
+        headers: Object.assign(headersBase(), extraHeaders || {}),
+        body: JSON.stringify(body || {})
+      });
+      const text = await res.text();
+      let data = null; if (text) { try { data = JSON.parse(text); } catch (e) {} }
+      if (!res.ok) {
+        const err = new Error((data && (data.message || data.error)) || ('auth ' + res.status));
+        err.status = res.status; err.code = data && data.code; err.body = data; throw err;
+      }
+      return data;
+    }
+
+    return {
+      _store: store,
+      getTokens,
+      isSignedIn: () => !!(getTokens() && getTokens().refresh_token),
+      async signUp(email, password, displayName) {
+        // สมัคร แล้ว sign-in ต่อเพื่อได้โทเคนทันที (Stack Auth แยก endpoint)
+        await call('/api/v1/auth/password/sign-up', {
+          email, password, verification_callback_url: (typeof location !== 'undefined' ? location.href : '')
+        });
+        if (displayName) { /* ตั้งชื่อหลัง sign-in ผ่าน /api/v1/users/me */ }
+        return this.signIn(email, password, displayName);
+      },
+      async signIn(email, password, displayName) {
+        const t = await call('/api/v1/auth/password/sign-in', { email, password });
+        setTokens({ access_token: t.access_token, refresh_token: t.refresh_token, at: Date.now() });
+        if (displayName) { try { await this.setDisplayName(displayName); } catch (e) {} }
+        return t;
+      },
+      async setDisplayName(name) {
+        const tk = getTokens(); if (!tk) return;
+        await call('/api/v1/users/me', { display_name: name }, { 'X-Stack-Access-Token': tk.access_token });
+      },
+      async refresh() {
+        const tk = getTokens();
+        if (!tk || !tk.refresh_token) return null;
+        const t = await call('/api/v1/auth/sessions/current/refresh', {}, { 'X-Stack-Refresh-Token': tk.refresh_token });
+        const next = { access_token: t.access_token, refresh_token: tk.refresh_token, at: Date.now() };
+        setTokens(next);
+        return next.access_token;
+      },
+      // token ที่แนบไปกับ Data API — รีเฟรชถ้าเก่ากว่า ~40 นาที (อายุปกติ 1 ชม.)
+      async getAccessToken() {
+        const tk = getTokens();
+        if (!tk) return null;
+        if (!tk.access_token || (Date.now() - (tk.at || 0)) > 40 * 60 * 1000) {
+          try { return await this.refresh(); } catch (e) { return tk.access_token || null; }
+        }
+        return tk.access_token;
+      },
+      signOut() { setTokens(null); }
+    };
+  }
+
+  function memStore() {
+    const m = {};
+    return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } };
+  }
+
+  return {
+    companyToRow, rowToCompany, rowIsDeleted, changedColumns, WRITABLE_COLS,
+    makeData, makeAuth, memStore
+  };
+});
+
+</script>
+<script>
 'use strict';
 
 /* ---------- utilities ---------- */
@@ -3049,295 +3332,181 @@ $('btnToggleDetail').addEventListener('click', () => {
   d.style.display = d.style.display === 'none' ? 'block' : 'none';
 });
 
-/* ---------- ระบบกลาง (Firebase Cloud Sync) ---------- */
+/* ---------- ระบบกลาง (Neon: Neon Auth + Data API) ---------- */
 const CLOUD_CFG_KEY = 'pnd51_cloud_config_v1';
-const CLOUD_ADMIN_EMAILS = ['apichart.expert@gmail.com'];   // partner/ผู้ดูแล — อนุมัติผู้สมัครใหม่ได้
-// ค่าเชื่อมต่อระบบกลางของสำนักงาน (ฝังในแอป — เปิดที่ไหนก็เชื่อมต่ออัตโนมัติ ไม่ต้องวางเอง)
-// หมายเหตุ: firebaseConfig เป็นตัวระบุโปรเจกต์สาธารณะ ไม่ใช่ความลับ — สิทธิ์เข้าถึงข้อมูลคุมด้วย Firestore Rules + การอนุมัติบัญชี
-const CLOUD_DEFAULT_CONFIG = {
-  apiKey: 'AIzaSyB3W7SQsDMTuGYMtWm7RXshNOzINRzc3FI',
-  authDomain: 'bbt-pnd51.firebaseapp.com',
-  projectId: 'bbt-pnd51',
-  storageBucket: 'bbt-pnd51.firebasestorage.app',
-  messagingSenderId: '671227244853',
-  appId: '1:671227244853:web:f5a9e720504a4766185c7c',
-  measurementId: 'G-S8EQ1T3BQC'
+const CLOUD_ADMIN_EMAILS = ['apichart.expert@gmail.com'];   // สะดวกฝั่ง client เท่านั้น — สิทธิ์จริงคุมด้วย RLS (role=partner ในตาราง app_user)
+// ค่าเชื่อมต่อ Neon (ฝังในแอป — ค่าฝั่ง client เปิดเผยได้ ความปลอดภัยคุมด้วย RLS)
+// กรอกค่าจาก Neon Console: Data API URL + Neon Auth (Project ID / Publishable Client Key)
+const NEON_DEFAULT_CONFIG = {
+  dataApiUrl: '',          // เช่น https://xxxx.apirest.<region>.aws.neon.tech
+  authProjectId: '',       // Neon Console → Auth → Project ID
+  authPublishableKey: '',  // Neon Console → Auth → Publishable Client Key
+  authBaseUrl: 'https://api.stack-auth.com'
 };
-let fbAuth = null, fbDb = null;
+let neonAuth = null, neonData = null;
 let cloudUser = null, cloudReady = false, cloudLoadFailed = false, cloudPushing = false;
 let cloudApproved = false, cloudSignupMode = false, cloudRole = '';
 // บทบาท: staff = ผู้จัดทำ · manager = ผู้จัดทำ/ผู้ตรวจสอบ · partner = ผู้อนุมัติ (และผู้ดูแลระบบ)
 const CLOUD_ROLE_LABELS = { staff: 'Staff (ผู้จัดทำ)', manager: 'Manager (จัดทำ/ตรวจสอบ)', partner: 'Partner (จัดทำ/ตรวจสอบ/อนุมัติ)' };
-// admin = อีเมลใน CLOUD_ADMIN_EMAILS หรือผู้ใช้ที่ได้รับบทบาท partner (อนุมัติแล้ว)
-function isCloudAdmin() {
-  return !!(cloudUser && (CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())
-    || (cloudApproved && cloudRole === 'partner')));
-}
-let applyingRemote = false, pushTimer = null, unsubCompanies = null;
+function isCloudAdmin() { return !!(cloudUser && cloudApproved && cloudRole === 'partner'); }
+let applyingRemote = false, pushTimer = null, pollTimer = null;
+const pushedJson = {};      // id -> companyProbe ของบริษัทที่ซิงค์แล้วล่าสุด (ไม่รวม _syncAt) — ใช้ดูว่ามีอะไรเปลี่ยนต้องส่ง
+const prevRows = {};        // id -> แถวจากเซิร์ฟเวอร์ล่าสุด (snake_case) — ใช้ทำ field-merge (PATCH เฉพาะช่องที่เปลี่ยน)
 
 function getCloudConfig() {
-  try {
-    const raw = localStorage.getItem(CLOUD_CFG_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {}
-  return CLOUD_DEFAULT_CONFIG;   // ไม่มีค่าที่วางเอง → ใช้ค่าสำนักงานที่ฝังไว้
-}
-// รับได้ทั้ง JSON ล้วน และโค้ด const firebaseConfig = {...} ที่ก๊อบมาจาก Firebase Console
-function parseConfigText(text) {
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error('ไม่พบข้อมูล config ในข้อความที่วาง');
-  // เดินอ่านทีละตัวอักษร โดยรู้ว่าตอนนี้อยู่ในเครื่องหมายคำพูดหรือไม่
-  // — เดิมใช้ replace ล้วน ๆ จึงกิน // ที่อยู่กลาง URL (databaseURL: "https://xxx.firebaseio.com")
-  //   ทำให้ค่าขาดกลางคันและ JSON.parse ล้มพร้อมข้อความภาษาอังกฤษที่ผู้ใช้อ่านไม่รู้เรื่อง
-  const src = m[0];
-  let out = '', quote = null;
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i], next = src[i + 1];
-    if (quote) {
-      if (ch === '\\') {
-        // \' ไม่ใช่ escape ที่ JSON รู้จัก — ในสตริงเดี่ยวต้องคลายเป็น ' ธรรมดา ส่วนในสตริงคู่ต้องคงเป็น \"
-        if (next === quote) out += (quote === '"' ? '\\"' : "'");
-        else out += ch + (next || '');
-        i++; continue;
-      }
-      if (ch === quote) { out += '"'; quote = null; continue; }
-      out += (ch === '"') ? '\\"' : ch;   // ' ... " ... ' ต้องหนีให้ถูกเมื่อแปลงเป็น JSON
-      continue;
-    }
-    if (ch === '"' || ch === "'") { quote = ch; out += '"'; continue; }
-    if (ch === '/' && next === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
-    if (ch === '/' && next === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i++; continue; }
-    out += ch;
-  }
-  const t = out
-    .replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/g, '$1"$2":')
-    .replace(/,\s*([}\]])/g, '$1');
-  let cfg;
-  try { cfg = JSON.parse(t); }
-  catch (e) { throw new Error('อ่าน config ไม่ได้ — วางเฉพาะส่วน { ... } ที่ก๊อบจาก Firebase Console'); }
-  if (!cfg.apiKey || !cfg.projectId) throw new Error('config ไม่ครบ — ต้องมี apiKey และ projectId');
+  let cfg = NEON_DEFAULT_CONFIG;
+  try { const raw = localStorage.getItem(CLOUD_CFG_KEY); if (raw) cfg = Object.assign({}, NEON_DEFAULT_CONFIG, JSON.parse(raw)); } catch (e) {}
+  // ยังไม่กรอกค่าครบ → ถือว่ายังไม่ตั้งค่า (โหมดออฟไลน์ + การ์ดตั้งค่า)
+  if (!cfg.dataApiUrl || !cfg.authProjectId || !cfg.authPublishableKey) return null;
   return cfg;
 }
-function loadScript(src) {
-  return new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = src; s.onload = res; s.onerror = () => rej(new Error('โหลดสคริปต์ไม่สำเร็จ'));
-    document.head.appendChild(s);
-  });
+// รับ JSON { dataApiUrl, authProjectId, authPublishableKey } ที่ก๊อบจาก Neon Console
+function parseConfigText(text) {
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('ไม่พบข้อมูล config — วางเป็น JSON { dataApiUrl, authProjectId, authPublishableKey }');
+  let cfg;
+  try { cfg = JSON.parse(m[0].replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/g, '$1"$2":').replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"')); }
+  catch (e) { throw new Error('อ่าน config ไม่ได้ — ตรวจรูปแบบ JSON'); }
+  if (!cfg.dataApiUrl || !cfg.authProjectId || !cfg.authPublishableKey)
+    throw new Error('config ไม่ครบ — ต้องมี dataApiUrl, authProjectId, authPublishableKey');
+  return cfg;
 }
+// อ่าน payload ของ JWT (ฝั่ง client ไม่ต้องตรวจลายเซ็น — เซิร์ฟเวอร์ตรวจเอง) เพื่อรู้ uid/email
+function decodeJwt(t) {
+  try {
+    const p = String(t || '').split('.')[1];
+    if (!p) return null;
+    const s = p.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(decodeURIComponent(escape(atob(s + '==='.slice((s.length + 3) % 4)))));
+  } catch (e) { return null; }
+}
+function thaiAuthError(e) {
+  const s = (e && e.status) || 0;
+  const msg = (e && (e.message || e.code)) || String(e || '');
+  if (s === 401 || /credential|password|invalid.?login|unauthor/i.test(msg)) return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+  if (s === 403 || /permission|not.?allow|forbidden|rls/i.test(msg)) return 'ไม่มีสิทธิ์ดำเนินการ — ตรวจสถานะการอนุมัติ/บทบาท';
+  if (/exist|duplicate|already/i.test(msg)) return 'อีเมลนี้ถูกใช้สมัครไปแล้ว — ลองเข้าสู่ระบบแทน';
+  if (/password/i.test(msg) && /short|weak|length/i.test(msg)) return 'รหัสผ่านสั้นหรือเดาง่ายเกินไป';
+  if (/network|fetch|failed to fetch/i.test(msg)) return 'เชื่อมต่อเครือข่ายไม่ได้';
+  return msg;
+}
+
 async function cloudInit() {
   renderCloudUI();
   const cfg = getCloudConfig();
-  if (!cfg) return;
+  if (!cfg) return;   // ยังไม่ตั้งค่า Neon → ใช้โหมดออฟไลน์
   try {
-    const V = '10.12.2';
-    if (!window.firebase) {
-      await loadScript(`https://www.gstatic.com/firebasejs/${V}/firebase-app-compat.js`);
-      await loadScript(`https://www.gstatic.com/firebasejs/${V}/firebase-auth-compat.js`);
-      await loadScript(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore-compat.js`);
-    }
-    if (!firebase.apps.length) firebase.initializeApp(cfg);
-    fbAuth = firebase.auth();
-    fbDb = firebase.firestore();
+    neonAuth = NeonSync.makeAuth({ authBaseUrl: cfg.authBaseUrl, projectId: cfg.authProjectId, publishableKey: cfg.authPublishableKey });
+    neonData = NeonSync.makeData({ dataApiUrl: cfg.dataApiUrl, getToken: () => neonAuth.getAccessToken() });
     cloudReady = true;
-    fbAuth.onAuthStateChanged(async u => {
-      cloudUser = u;
-      cloudApproved = false;
-      if (!u) {
-        // ล้างสถานะของผู้ใช้คนก่อนให้หมด — บทบาทค้างไว้เป็นกับดักสำหรับโค้ดที่เช็ค cloudRole อย่างเดียวในอนาคต
-        cloudRole = '';
-        Object.keys(pushedJson).forEach(k => { delete pushedJson[k]; });
-        cloudPushProblem = false;
-      }
-      if (u) {
-        await checkApproval();
-        if (cloudApproved) startSync(); else stopSync();
-      } else stopSync();
-      renderCloudUI();
-    });
-  } catch (e) {
-    cloudLoadFailed = true;
-  }
+    if (neonAuth.isSignedIn()) await afterSignIn();
+  } catch (e) { cloudLoadFailed = true; }
   renderCloudUI();
 }
-// ตรวจว่าบัญชีนี้ได้รับอนุมัติจาก partner แล้วหรือยัง (partner เองผ่านเสมอ)
-async function checkApproval() {
-  if (!cloudUser || !fbDb) { cloudApproved = false; cloudRole = ''; return; }
-  // เช็คจากอีเมลโดยตรง (ตอนนี้ยังไม่รู้ role จาก Firestore)
-  if (CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())) { cloudApproved = true; cloudRole = 'partner'; return; }
-  try {
-    const ref = fbDb.collection('users').doc(cloudUser.uid);
-    const doc = await ref.get();
-    if (doc.exists) {
-      if (doc.data().rejected === true) { cloudApproved = false; cloudRole = ''; return; }   // ถูกปฏิเสธแล้ว ห้ามวนขอใหม่เอง
-      cloudApproved = doc.data().approved === true;
-      cloudRole = doc.data().role || 'staff';
-    } else {
-      // บัญชีที่ partner สร้างให้ใน Console ยังไม่มีคำขอ — สร้างคำขอรออนุมัติให้อัตโนมัติ
-      await ref.set({ email: cloudUser.email || '', name: '', approved: false, role: 'staff', requestedAt: new Date().toISOString() });
-      cloudApproved = false;
-      cloudRole = 'staff';
-    }
-  } catch (e) {
-    cloudApproved = false;
-    cloudRole = '';
-  }
+// หลังล็อกอินสำเร็จ/พบว่ามี session อยู่แล้ว: อ่านตัวตนจากโทเคน → ตรวจอนุมัติ → เริ่มซิงค์
+async function afterSignIn() {
+  cloudApproved = false; cloudRole = '';
+  let tok = null;
+  try { tok = await neonAuth.getAccessToken(); } catch (e) {}
+  const claims = decodeJwt(tok);
+  cloudUser = claims && claims.sub ? { uid: claims.sub, email: claims.email || '' } : null;
+  if (!cloudUser) { stopSync(); return; }
+  await checkApproval();
+  if (cloudApproved) await startSync(); else stopSync();
 }
-
-// ดึงบัญชีผู้ใช้ที่อนุมัติแล้วมาเป็นฐานพนักงาน (แทนการเพิ่มมือ) — ใช้เลือกผู้จัดทำ/ผู้ตรวจ/ผู้อนุมัติ
-async function loadEmployeesFromUsers() {
-  if (!fbDb || !cloudUser || !cloudApproved) return;
+// ตรวจว่าบัญชีนี้ได้รับอนุมัติแล้วหรือยัง (ถ้ายังไม่มีโปรไฟล์ → สร้างคำขอรออนุมัติ)
+async function checkApproval() {
+  if (!cloudUser || !neonData) { cloudApproved = false; cloudRole = ''; return; }
   try {
-    const us = await fbDb.collection('users').where('approved', '==', true).get();
-    const emps = [];
-    us.forEach(d => {
-      const u = d.data();
+    let me = await neonData.getMyProfile(cloudUser.uid);
+    if (!me) { await neonData.createOwnProfile(cloudUser.uid, cloudUser.email, ''); me = await neonData.getMyProfile(cloudUser.uid); }
+    if (me && me.rejected === true) { cloudApproved = false; cloudRole = ''; return; }
+    cloudApproved = !!(me && me.approved === true);
+    cloudRole = (me && me.role) || 'staff';
+  } catch (e) { cloudApproved = false; cloudRole = ''; }
+}
+// ดึงบัญชีที่อนุมัติแล้วมาเป็นฐานพนักงาน (รวมกับที่เพิ่มมือในโหมดออฟไลน์ ไม่ทับทิ้ง)
+async function loadEmployeesFromUsers() {
+  if (!neonData || !cloudUser || !cloudApproved) return;
+  try {
+    const us = await neonData.listApprovedUsers();
+    const emps = (us || []).map(u => {
       const rtype = u.role || 'staff';
-      emps.push({ name: (u.name || u.email || '').trim(), email: u.email || '', role: CLOUD_ROLE_LABELS[rtype] || rtype, rtype, src: 'cloud' });
-    });
-    // ผู้ดูแลที่ระบุด้วยอีเมล (CLOUD_ADMIN_EMAILS) ไม่มีเอกสารใน users จึงไม่ติดมากับ query
-    // — ถ้าไม่เติมเอง partner ตัวจริงจะเลือกเป็นผู้อนุมัติไม่ได้เลย
-    const meEmail = ((cloudUser && cloudUser.email) || '').toLowerCase();
-    if (CLOUD_ADMIN_EMAILS.includes(meEmail) && !emps.some(e => (e.email || '').toLowerCase() === meEmail)) {
-      emps.push({ name: cloudUser.email, email: cloudUser.email, role: CLOUD_ROLE_LABELS.partner, rtype: 'partner', src: 'cloud' });
-    }
+      return { name: (u.name || u.email || '').trim(), email: u.email || '', role: CLOUD_ROLE_LABELS[rtype] || rtype, rtype, src: 'cloud' };
+    }).filter(e => e.name);
     if (emps.length) {
-      // รวมกับรายชื่อที่เพิ่มไว้เองในโหมดออฟไลน์ แทนการเขียนทับทิ้ง
-      // — เดิมทับทั้งชุด ทำให้พนักงานที่พิมพ์เองหายถาวร (โหมดระบบกลางซ่อนปุ่มเพิ่ม จึงเพิ่มกลับไม่ได้)
       const byName = new Map();
       (db.employees || []).forEach(e => { if (e && e.name && e.src !== 'cloud') byName.set(e.name, e); });
-      emps.forEach(e => byName.set(e.name, e));   // บัญชีระบบกลางมีสิทธิ์ทับชื่อซ้ำ
+      emps.forEach(e => byName.set(e.name, e));
       db.employees = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'th'));
       safeStore.set(JSON.stringify(db));
       refreshEmployeesUI();
       renderWorkflow();
     }
-  } catch (e) {
-    // เดิมกลืนเงียบ — ถ้า rules ปฏิเสธหรือเน็ตหลุด ผู้ใช้จะเข้าใจว่ารายชื่อเป็นปัจจุบันทั้งที่ไม่ใช่
-    toast('ดึงรายชื่อผู้ใช้จากระบบกลางไม่สำเร็จ — ใช้รายชื่อเดิมในเครื่องต่อ');
-  }
+  } catch (e) { toast('ดึงรายชื่อผู้ใช้จากระบบกลางไม่สำเร็จ — ใช้รายชื่อเดิมในเครื่องต่อ'); }
 }
 
-// การตัดสินว่าเครื่องไหน "ใหม่กว่า" ใช้ Date.now() ของเครื่องที่เขียน
-// ถ้านาฬิกาเครื่องนี้เพี้ยน งานที่แก้ล่าสุดอาจแพ้ให้ของเก่าโดยไม่มีสัญญาณอะไรเลย — อย่างน้อยต้องเตือน
-let clockSkewWarned = false;
-function checkClockSkew(remoteStamp) {
-  if (clockSkewWarned || !remoteStamp) return;
-  const skew = Date.now() - remoteStamp;
-  // ค่าที่อ่านได้คือเวลาที่เครื่องอื่นเขียนล่าสุด จึงเตือนเฉพาะกรณีที่นาฬิกาเราช้ากว่าเห็นได้ชัด (> 5 นาที)
-  if (skew < -5 * 60 * 1000) {
-    clockSkewWarned = true;
-    toast('⚠ นาฬิกาเครื่องนี้ช้ากว่าเครื่องอื่นในระบบมาก — การซิงค์อาจตัดสินผิดพลาด โปรดตั้งเวลาอัตโนมัติ');
-  }
-}
 async function startSync() {
-  if (!fbDb || !cloudUser || !cloudApproved) return;
+  if (!neonData || !cloudUser || !cloudApproved) return;
   try {
-    // 0) รายชื่อบริษัทที่ถูกลบ (จากเครื่องไหนก็ตาม) — รวมกับของเครื่องนี้ แล้วใช้กรองไม่ให้ของที่ลบแล้วกลับมา
-    try {
-      const delDoc = await fbDb.collection('meta').doc('deleted').get();
-      const dd = delDoc.exists ? (delDoc.data() || {}) : {};
-      mergeTombs(dd.tombs, dd.ids);
-      checkClockSkew(dd._syncAt);
-    } catch (e) { /* ไม่มีเอกสารนี้ก็ไม่เป็นไร */ }
-    // 1) ดึงข้อมูลส่วนกลางมารวมกับในเครื่อง (ใครใหม่กว่าใช้อันนั้น)
-    const snap = await fbDb.collection('companies').get();
-    applyingRemote = true;
-    snap.forEach(d => {
-      const rc = d.data();
-      if (!rc || !rc.id || isDeleted(rc.id)) return;
-      const idx = db.companies.findIndex(x => x.id === rc.id);
-      // เสมอกันให้ "เครื่องนี้ชนะ" — ของในเครื่องคือสิ่งที่ผู้ใช้เห็น/เพิ่งทำอยู่ ถ้าแพ้ tie ข้อมูลที่กรอกจะหายทั้งที่ไม่มีใครแก้ทับจริง
-      if (idx >= 0) {
-        if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc;
-        else {
-          // ของในเครื่องใหม่กว่า (หรือเสมอ) — ต้องส่งขึ้นไปทับ ไม่ใช่แค่ return
-          // เดิมไม่ล้าง pushedJson ทำให้ฝั่งที่ชนะ "ดูเหมือนส่งไปแล้ว" และสองเครื่องแยกกันถาวร
-          delete pushedJson[rc.id];
-          return;
-        }
-      }
-      else db.companies.push(rc);
-      // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
-      companyStamp[rc.id] = companyProbe(rc);
-      pushedJson[rc.id] = JSON.stringify(rc);
-    });
-    // เอาบริษัทที่ถูกลบ (จากเครื่องอื่น) ออกจากเครื่องนี้ด้วย — พร้อมล้างไฟล์แนบของบริษัทนั้นทิ้ง
-    // (เดิมลบเฉพาะรายการบริษัท ไฟล์แนบค้างใน IndexedDB โดยไม่มีทางเข้าถึงอีกเลย)
-    db.companies.filter(c => isDeleted(c.id)).forEach(c => attDeleteByCompany(c.id));
-    db.companies = db.companies.filter(c => !isDeleted(c.id));
-    if (db.companies.length === 0) db.companies.push(newCompany());
-    // ซ่อมบริษัทที่เปิดอยู่ก่อน แล้วค่อยโหลดพนักงาน — ถ้าบริษัทที่เปิดอยู่ถูกลบจากเครื่องอื่น
-    // activeCompany() จะเป็น undefined และทำให้ loadEmployeesFromUsers พังกลางคันแบบเงียบ ๆ
-    if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
-    // ฐานพนักงาน = บัญชีผู้ใช้ระบบกลางที่อนุมัติแล้ว (ชื่อ + บทบาท Staff/Manager/Partner)
+    await pullAll(false);
     await loadEmployeesFromUsers();
-    safeStore.set(JSON.stringify(db));
-    applyingRemote = false;
     renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
-    // 2) ส่งข้อมูลในเครื่องขึ้นส่วนกลาง
     await cloudPushNow();
-    // 3) ฟังการเปลี่ยนแปลงจากเครื่องอื่นแบบเรียลไทม์
-    if (unsubCompanies) unsubCompanies();
-    unsubCompanies = fbDb.collection('companies').onSnapshot(s => {
-      // เดิมมี `if (cloudPushing) return;` ซึ่งทิ้ง docChanges ทิ้งถาวร (Firestore ไม่ส่งชุดเดิมซ้ำ)
-      // ผลคือพลาดการแก้ของเครื่องอื่นที่มาถึงระหว่างเรากำลัง push แล้วภายหลังยัง push ทับด้วยของเก่าอีก
-      // ตอนนี้ข้ามเฉพาะ "เสียงสะท้อนของการเขียนจากเครื่องนี้เองที่เซิร์ฟเวอร์ยังไม่ยืนยัน"
-      let changed = false;
-      const changedIds = new Set();
-      applyingRemote = true;
-      s.docChanges().forEach(ch => {
-        if (ch.doc.metadata && ch.doc.metadata.hasPendingWrites) return;
-        if (ch.type === 'removed') {
-          // เครื่องอื่นลบบริษัทนี้ → ลบในเครื่องนี้ตาม และจดกันไม่ให้กลับมา
-          const rid = ch.doc.id;
-          const di = db.companies.findIndex(x => x.id === rid);
-          if (di >= 0) { db.companies.splice(di, 1); changed = true; changedIds.add(rid); attDeleteByCompany(rid); }
-          markDeleted(rid);
-          db.delPushed[rid] = 1;   // เครื่องอื่นลบบนระบบกลางไปแล้ว ไม่ต้องสั่งลบซ้ำจากเครื่องนี้
-          return;
-        }
-        const rc = ch.doc.data();
-        if (!rc || !rc.id || isDeleted(rc.id)) return;
-        const idx = db.companies.findIndex(x => x.id === rc.id);
-        if (idx >= 0) {
-          if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = rc; changed = true; changedIds.add(rc.id); }
-          else { delete pushedJson[rc.id]; return; }   // ของเราใหม่กว่า/เสมอ → ต้องส่งขึ้นไปทับ ไม่ใช่ปล่อยแยกกัน
-        }
-        else { db.companies.push(rc); changed = true; changedIds.add(rc.id); }
-        // รับจากระบบกลาง = เนื้อหานี้รับรู้แล้ว ไม่ต้องประทับเวลาใหม่/ส่งกลับซ้ำ
-        companyStamp[rc.id] = companyProbe(rc);
-        pushedJson[rc.id] = JSON.stringify(rc);
-      });
-      applyingRemote = false;
-      if (changed) {
-        if (db.companies.length === 0) db.companies.push(newCompany());
-        if (!db.companies.some(c => c.id === db.activeId)) db.activeId = db.companies[0].id;
-        safeStore.set(JSON.stringify(db));
-        renderCompanySelect(); renderEmployeeList(); renderJobsDashboard();
-        // วาดฟอร์มใหม่เฉพาะเมื่อ "บริษัทที่เปิดอยู่" ถูกแก้จริง และผู้ใช้ไม่ได้กำลังพิมพ์ค้างอยู่ —
-        // เดิมวาดใหม่ทุกครั้งที่บริษัทไหนก็ได้เปลี่ยน ทำให้ตัวเลขที่พิมพ์ค้าง (ยังไม่ blur) หายกลางคัน
-        const typing = document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName || '');
-        if (changedIds.has(db.activeId)) {
-          if (typing) toast('บริษัทนี้ถูกแก้จากเครื่องอื่น — สลับบริษัทหรือรีเฟรชเพื่อดูค่าล่าสุด');
-          else { loadCompanyToForm(); toast('มีข้อมูลอัปเดตจากระบบกลาง'); }
-        } else {
-          toast('มีข้อมูลอัปเดตจากระบบกลาง');
-        }
-      }
-    });
+    // Data API ไม่มี realtime → poll ทุก 10 วินาที (ข้ามถ้ากำลัง push อยู่)
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => { if (!cloudPushing && !applyingRemote) pullAll(true).catch(() => {}); }, 10000);
   } catch (e) {
     toast('ซิงค์กับระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
   }
   renderCloudUI();
 }
-function stopSync() { if (unsubCompanies) { unsubCompanies(); unsubCompanies = null; } }
-// บริษัทที่เนื้อหายังไม่ตรงกับที่ส่งขึ้นระบบกลางล่าสุด = ยังไม่ปลอดภัยที่จะล้างทิ้ง
-function unsyncedCompanies() {
-  return db.companies.filter(c => pushedJson[c.id] !== JSON.stringify(c));
+function stopSync() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+// ดึงบริษัททั้งหมดจากระบบกลาง แล้วรวมเข้ากับในเครื่อง (ใครใหม่กว่าตาม server time ใช้อันนั้น)
+async function pullAll(isPoll) {
+  const list = await neonData.listCompanies();
+  applyingRemote = true;
+  let changed = false; const changedIds = new Set();
+  list.forEach(({ company, row, deleted }) => {
+    prevRows[company.id] = row;
+    if (deleted) {
+      // เซิร์ฟเวอร์บอกว่าลบแล้ว → ลบในเครื่อง + จดกันไม่ให้ push ซ้ำ
+      markDeleted(company.id); db.delPushed[company.id] = 1;
+      const di = db.companies.findIndex(x => x.id === company.id);
+      if (di >= 0) { db.companies.splice(di, 1); attDeleteByCompany(company.id); changed = true; changedIds.add(company.id); }
+      return;
+    }
+    if (isDeleted(company.id)) return;   // ลบไว้ในเครื่องแต่ยังไม่ push — รอ push ค่อยว่ากัน
+    const idx = db.companies.findIndex(x => x.id === company.id);
+    if (idx >= 0) {
+      if ((company._syncAt || 0) > (db.companies[idx]._syncAt || 0)) { db.companies[idx] = company; changed = true; changedIds.add(company.id); }
+      else return;
+    } else { db.companies.push(company); changed = true; changedIds.add(company.id); }
+    companyStamp[company.id] = companyProbe(company);
+    pushedJson[company.id] = companyProbe(company);
+  });
+  if (db.companies.length === 0) db.companies.push(newCompany());
+  if (!db.companies.some(c => c.id === db.activeId) && db.companies.length) db.activeId = db.companies[0].id;
+  applyingRemote = false;
+  if (changed && isPoll) {
+    safeStore.set(JSON.stringify(db));
+    renderCompanySelect(); renderEmployeeList(); renderJobsDashboard();
+    const typing = document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName || '');
+    if (changedIds.has(db.activeId)) {
+      if (typing) toast('บริษัทนี้ถูกแก้จากเครื่องอื่น — สลับบริษัทหรือรีเฟรชเพื่อดูค่าล่าสุด');
+      else { loadCompanyToForm(); toast('มีข้อมูลอัปเดตจากระบบกลาง'); }
+    } else toast('มีข้อมูลอัปเดตจากระบบกลาง');
+  } else if (changed) {
+    safeStore.set(JSON.stringify(db));
+  }
 }
-// ล้างข้อมูลทั้งหมดที่เครื่องนี้ถืออยู่ — ใช้ตอนออกจากระบบบนเครื่องที่ใช้ร่วมกัน
-// ข้อมูลบริษัทอยู่บนระบบกลางแล้วจึงได้กลับมาเมื่อล็อกอินใหม่ · เอกสารแนบไม่เคยขึ้นระบบกลาง จะหายถาวร
+
+function stopSyncTimersOnly() { stopSync(); }
+// บริษัทที่เนื้อห (ไม่รวม _syncAt) ยังไม่ตรงกับที่ซิงค์ล่าสุด = ยังไม่ปลอดภัยที่จะล้างทิ้ง
+function unsyncedCompanies() {
+  return db.companies.filter(c => pushedJson[c.id] !== companyProbe(c));
+}
 async function wipeLocalData() {
   attRevokePreview();
   const ov = document.getElementById('attOverlay');
@@ -3347,6 +3516,7 @@ async function wipeLocalData() {
   safeStore.clear();
   Object.keys(companyStamp).forEach(k => { delete companyStamp[k]; });
   Object.keys(pushedJson).forEach(k => { delete pushedJson[k]; });
+  Object.keys(prevRows).forEach(k => { delete prevRows[k]; });
   db = { companies: [], activeId: null };
   loadDB();
   primeCompanyStamps();
@@ -3355,84 +3525,35 @@ async function wipeLocalData() {
   renderEmployeeList();
   renderJobsDashboard();
 }
-// จำเนื้อหาที่ push ขึ้นระบบกลางไปแล้ว — จะ push เฉพาะรายการที่เปลี่ยนจากครั้งก่อน
-// (เดิม push ทุกบริษัทพร้อมประทับเวลาใหม่ทุกครั้ง ทำให้เครื่องที่ push ทีหลังทับข้อมูลใหม่ของเครื่องอื่นด้วยข้อมูลเก่า)
-const pushedJson = {};
-// เพดานจริงของ Firestore: 500 การกระทำต่อ batch และ 1 MiB ต่อเอกสาร
-// เดิมยัดทุกอย่างลง batch เดียว — บริษัทใหญ่ตัวเดียวหรือรายการลบสะสมมาก ทำให้ทั้งสำนักงานหยุดซิงค์ถาวร
-const PUSH_BATCH_MAX = 400;
-const DOC_BYTES_MAX = 1000000;
-// หาว่าช่องบนสุดช่องไหนเปลี่ยนไปจากครั้งที่ส่งขึ้นไปล่าสุด — คืน null ถ้าไม่มีฐานเทียบ (ต้องส่งทั้งก้อน)
-// ช่องบนสุดของบริษัทแยกกันชัดเจนอยู่แล้ว (est / workflow / history / tb / priorYearTax ...)
-// การส่งเฉพาะช่องที่เปลี่ยนจึงทำให้คนละคนแก้คนละส่วนพร้อมกันได้โดยไม่ลบงานกันเอง
-function changedFields(c, prevJson) {
-  if (!prevJson) return null;
-  let prev;
-  try { prev = JSON.parse(prevJson); } catch (e) { return null; }
-  if (!prev || typeof prev !== 'object') return null;
-  const patch = {};
-  let count = 0;
-  Object.keys(c).forEach(k => {
-    if (JSON.stringify(c[k]) !== JSON.stringify(prev[k])) { patch[k] = c[k]; count++; }
-  });
-  if (!count) return null;
-  patch.id = c.id;                                  // กันเอกสารกำพร้าถ้าเซิร์ฟเวอร์ยังไม่มีรายการนี้
-  if (c._syncAt !== undefined) patch._syncAt = c._syncAt;
-  return patch;
-}
-let cloudPushBlocked = [];   // ชื่อบริษัทที่ส่งไม่ขึ้นเพราะใหญ่เกิน
-let cloudPushProblem = false;   // ยังมีของค้างส่ง — ต้องคาไว้จนกว่าจะส่งสำเร็จ ไม่ให้ป้าย "เชื่อมต่อแล้ว" มากลบ
+
+let cloudPushBlocked = [];
+let cloudPushProblem = false;
 async function cloudPushNow() {
-  // ต้องอนุมัติแล้วเท่านั้น — เดิมเช็คแค่ล็อกอิน ผู้ใช้ที่ยังรออนุมัติจึงเขียนทับ meta/deleted
-  // ด้วยรายการว่างได้ ทำให้บริษัทที่ลบไปแล้วฟื้นกลับมาทุกเครื่อง (ฝั่งเซิร์ฟเวอร์ต้องกันด้วย Firestore Rules ซ้ำอีกชั้น)
-  if (!fbDb || !cloudUser || !cloudApproved) return;
-  cloudPushing = true;
-  cloudPushBlocked = [];
-  // สร้างรายการงานทั้งหมดก่อน แล้วค่อยหั่นส่งเป็นชุด ๆ — ชุดไหนพังก็เสียเฉพาะชุดนั้น
-  const ops = [];
-  db.companies.forEach(c => {
-    const j = JSON.stringify(c);
-    if (pushedJson[c.id] === j) return;   // ไม่มีอะไรเปลี่ยน ไม่ต้องส่งซ้ำ
-    // เอกสารเกิน 1 MiB จะถูกปฏิเสธและลากทั้ง batch ล้มไปด้วย — คัดออกแล้วบอกผู้ใช้ว่าบริษัทไหน
-    if (j.length > DOC_BYTES_MAX) { cloudPushBlocked.push(c.name || '(ยังไม่ตั้งชื่อบริษัท)'); return; }
-    // ส่งเฉพาะ "ช่องที่เปลี่ยนจริง" แบบรวมเข้ากับของเดิมบนเซิร์ฟเวอร์ (merge) แทนการเขียนทับทั้งเอกสาร
-    // — เดิมเขียนทับทั้งก้อน ถ้า A แก้ตัวเลขและ B กดตรวจผ่านไล่เลี่ยกัน ฝ่ายที่ push ทีหลังจะลบงานอีกฝ่ายทิ้งทั้งดุ้น
-    const patch = changedFields(c, pushedJson[c.id]);
-    const ref = fbDb.collection('companies').doc(c.id);
-    ops.push(patch
-      ? { key: c.id, run: b => b.set(ref, patch, { merge: true }), mark: j }
-      : { key: c.id, run: b => b.set(ref, JSON.parse(j)), mark: j });
-  });
-  // ลบบริษัทที่ผู้ใช้สั่งลบ ออกจากระบบกลางด้วย — สั่งลบครั้งเดียวแล้วจำไว้ถาวร (db.delPushed)
-  // เดิมจำไว้แค่ในหน่วยความจำ ทุกครั้งที่เปิดหน้าจึงสั่งลบซ้ำทุก id ที่เคยลบ ทำให้ batch โตจนล้มและลบซ้ำของที่เอากลับมาแล้ว
-  deletedIdList().forEach(id => {
-    if (db.delPushed[id]) return;
-    ops.push({ key: '_del_' + id, run: b => b.delete(fbDb.collection('companies').doc(id)), mark: '1', delId: id });
-  });
-  const tj = JSON.stringify(db.tombs || {});
-  if (pushedJson['_tombs'] !== tj) {
-    // เขียนทั้ง tombs (รูปแบบใหม่ รวมกันได้ถูกต้อง) และ ids (รายชื่อที่ลบอยู่ตอนนี้ เผื่อเครื่องที่ยังใช้รุ่นเก่า)
-    ops.push({
-      key: '_tombs',
-      run: b => b.set(fbDb.collection('meta').doc('deleted'),
-        { tombs: JSON.parse(tj), ids: deletedIdList(), _syncAt: Date.now() }, { merge: true }),
-      mark: tj
-    });
-  }
-  // หมายเหตุ: เลิกเขียน meta/employees แล้ว — ไม่มีที่ไหนอ่านค่านี้เลย (ฐานพนักงานมาจาก collection users)
-  // แถมเป็นช่องให้เครื่องที่ยังไม่อนุมัติเขียนทับรายชื่อทั้งสำนักงาน
+  if (!neonData || !cloudUser || !cloudApproved) return;
+  cloudPushing = true; cloudPushBlocked = [];
   let ok = 0, failed = 0;
-  for (let i = 0; i < ops.length; i += PUSH_BATCH_MAX) {
-    const chunk = ops.slice(i, i + PUSH_BATCH_MAX);
-    const batch = fbDb.batch();
-    chunk.forEach(o => o.run(batch));
+  // 1) ส่งคำสั่งลบ (soft delete) ของบริษัทที่ลบในเครื่องแต่ยังไม่แจ้งเซิร์ฟเวอร์
+  for (const id of deletedIdList()) {
+    if (db.delPushed[id]) continue;
+    try { await neonData.softDelete(id); db.delPushed[id] = 1; delete pushedJson[id]; ok++; }
+    catch (e) { failed++; toast('ลบบนระบบกลางไม่สำเร็จ: ' + thaiAuthError(e)); }
+  }
+  // 2) ส่งบริษัทที่เปลี่ยน — PATCH เฉพาะช่องที่ต่าง (field-merge ฝั่ง server)
+  for (const c of db.companies) {
+    if (pushedJson[c.id] === companyProbe(c)) continue;   // ไม่มีอะไรเปลี่ยน
     try {
-      await batch.commit();
-      chunk.forEach(o => { pushedJson[o.key] = o.mark; if (o.delId) db.delPushed[o.delId] = 1; });
-      ok += chunk.length;
+      // ถ้าเคยถูกลบบนเซิร์ฟเวอร์แล้วเอากลับมา → ยกเลิก soft delete ก่อน
+      if (prevRows[c.id] && NeonSync.rowIsDeleted(prevRows[c.id])) { await neonData.undelete(c.id); prevRows[c.id].deleted_at = null; }
+      const row = await neonData.saveCompany(c, prevRows[c.id] || null);
+      if (row && typeof row === 'object') {
+        prevRows[c.id] = row;
+        if (row.updated_at) c._syncAt = Date.parse(row.updated_at) || c._syncAt;
+      }
+      companyStamp[c.id] = companyProbe(c);
+      pushedJson[c.id] = companyProbe(c);
+      ok++;
     } catch (e) {
-      chunk.forEach(o => { delete pushedJson[o.key]; });   // ส่งไม่สำเร็จ — รอบหน้าลองส่งใหม่
-      failed += chunk.length;
+      failed++; delete pushedJson[c.id];
       toast('บันทึกขึ้นระบบกลางไม่สำเร็จ: ' + thaiAuthError(e));
     }
   }
@@ -3440,17 +3561,13 @@ async function cloudPushNow() {
   cloudPushing = false;
   renderPushStatus(ok, failed);
 }
-// สถานะการส่งขึ้นระบบกลาง — ต้องเห็นชัดว่ายังไม่ได้ซิงค์ ไม่ใช่ขึ้น "เชื่อมต่อแล้ว" ค้างไว้ทั้งที่ไม่มีอะไรขึ้นเลย
 function renderPushStatus(ok, failed) {
   const el = $('cloudInfo');
   if (!el) return;
   const t = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-  cloudPushProblem = !!(failed || cloudPushBlocked.length);
+  cloudPushProblem = !!failed;
   if (cloudPushProblem) {
-    let m = '⚠ ';
-    if (failed) m += `ยังส่งขึ้นระบบกลางไม่สำเร็จ ${failed} รายการ (จะลองใหม่เมื่อมีการแก้ไขครั้งถัดไป) `;
-    if (cloudPushBlocked.length) m += `· ข้อมูลใหญ่เกิน 1MB ส่งไม่ได้: ${cloudPushBlocked.join(', ')} — ลบงบทดลองงวดที่ไม่ใช้ออกก่อน`;
-    el.textContent = m;
+    el.textContent = `⚠ ยังส่งขึ้นระบบกลางไม่สำเร็จ ${failed} รายการ (จะลองใหม่เมื่อมีการแก้ไขครั้งถัดไป)`;
     el.style.color = 'var(--red)';
     const badge = $('cloudBadge');
     if (badge) { badge.className = 'wf-badge wf-returned'; badge.textContent = 'ซิงค์ไม่ครบ — ข้อมูลบางส่วนยังไม่ขึ้นระบบกลาง'; }
@@ -3462,21 +3579,9 @@ function renderPushStatus(ok, failed) {
 function cloudSchedulePush() {
   if (!cloudUser || !cloudApproved || applyingRemote) return;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(cloudPushNow, 1500);
+  pushTimer = setTimeout(() => { cloudPushNow().catch(() => {}); }, 1500);
 }
-function thaiAuthError(e) {
-  const code = (e && e.code) || '';
-  if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
-  if (code.includes('invalid-email')) return 'รูปแบบอีเมลไม่ถูกต้อง';
-  if (code.includes('email-already-in-use')) return 'อีเมลนี้ถูกใช้สมัครไปแล้ว — ลองเข้าสู่ระบบแทน';
-  if (code.includes('weak-password')) return 'รหัสผ่านสั้นหรือเดาง่ายเกินไป (อย่างน้อย 6 ตัวอักษร)';
-  if (code.includes('admin-restricted') || code.includes('operation-not-allowed')) return 'ระบบยังไม่เปิดให้สมัครเอง — ติดต่อ partner ให้เปิด "Enable create (sign-up)" ใน Firebase Console';
-  if (code.includes('too-many-requests')) return 'ลองผิดหลายครั้งเกินไป โปรดรอสักครู่';
-  if (code.includes('network')) return 'เชื่อมต่ออินเทอร์เน็ตไม่ได้';
-  if (code.includes('permission-denied')) return 'ไม่มีสิทธิ์เข้าถึงข้อมูล — ตรวจ Security Rules ใน Firebase Console';
-  if (code.includes('api-key')) return 'ค่า config ไม่ถูกต้อง (apiKey ผิด)';
-  return (e && e.message) || String(e);
-}
+
 function renderCloudUI() {
   const badge = $('cloudBadge');
   const cfg = getCloudConfig();
@@ -3517,8 +3622,7 @@ function renderCloudUI() {
     badge.textContent = 'ซิงค์ไม่ครบ — ข้อมูลบางส่วนยังไม่ขึ้นระบบกลาง';
   } else {
     badge.className = 'wf-badge wf-approved';
-    badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '')
-      + (cloudRole ? ' · ' + (CLOUD_ROLE_LABELS[cloudRole] || cloudRole) : '');
+    badge.textContent = 'เชื่อมต่อแล้ว: ' + (cloudUser.email || '') + (cloudRole ? ' · ' + (CLOUD_ROLE_LABELS[cloudRole] || cloudRole) : '');
   }
   $('cloudConnected').style.display = 'block';
   $('cloudAdminPanel').style.display = isCloudAdmin() ? 'block' : 'none';
@@ -3531,20 +3635,18 @@ function renderCloudUI() {
 async function loadPendingUsers() {
   const wrap = $('cloudPendingList');
   try {
-    const snap = await fbDb.collection('users').where('approved', '==', false).get();
+    const rows = await neonData.listPendingUsers();
     let h = '';
-    snap.forEach(d => {
-      const u = d.data();
-      if (u.rejected === true) return;   // ปฏิเสธไปแล้ว ไม่ต้องโผล่ในคิวอีก
+    (rows || []).forEach(u => {
       h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 0; border-bottom:1px solid var(--border)">`
         + `<span style="flex:1; min-width:180px"><b>${escapeHtml(u.name || '(ไม่ระบุชื่อ)')}</b> · ${escapeHtml(u.email || '')}</span>`
-        + `<select id="roleSel_${safeId(d.id)}" style="width:auto; padding:6px 10px; font-size:.85rem">`
+        + `<select id="roleSel_${safeId(u.uid)}" style="width:auto; padding:6px 10px; font-size:.85rem">`
         + `<option value="staff">Staff (ผู้จัดทำ)</option>`
         + `<option value="manager">Manager (จัดทำ/ตรวจสอบ)</option>`
         + `<option value="partner">Partner (ผู้อนุมัติ/ผู้ดูแล)</option>`
         + `</select>`
-        + `<button class="btn-approve btn-sm" onclick="cloudApproveUser('${safeId(d.id)}')" type="button">✔ อนุมัติ</button>`
-        + `<button class="btn-reject btn-sm" onclick="cloudRejectUser('${safeId(d.id)}')" type="button">✕ ปฏิเสธ</button>`
+        + `<button class="btn-approve btn-sm" onclick="cloudApproveUser('${safeId(u.uid)}')" type="button">✔ อนุมัติ</button>`
+        + `<button class="btn-reject btn-sm" onclick="cloudRejectUser('${safeId(u.uid)}')" type="button">✕ ปฏิเสธ</button>`
         + `</div>`;
     });
     wrap.innerHTML = h || '<div class="wf-empty">ไม่มีคำขอค้างอยู่</div>';
@@ -3556,42 +3658,35 @@ window.cloudApproveUser = async function (uid) {
   try {
     const roleSel = $('roleSel_' + uid);
     const role = (roleSel && roleSel.value) || 'staff';
-    await fbDb.collection('users').doc(uid).update({ approved: true, role, approvedBy: cloudUser.email || '', approvedAt: new Date().toISOString() });
+    await neonData.approveUser(uid, role, (cloudUser && cloudUser.email) || '');
     toast(`อนุมัติเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้กด "ตรวจสอบสถานะอีกครั้ง" ในแอปได้เลย`);
     loadPendingUsers(); loadAllUsers(); loadEmployeesFromUsers();
   } catch (e) { toast('อนุมัติไม่สำเร็จ: ' + thaiAuthError(e)); }
 };
 window.cloudRejectUser = async function (uid) {
-  if (!confirm('ปฏิเสธคำขอนี้? (บัญชีล็อกอินจะยังอยู่แต่เข้าถึงข้อมูลส่วนกลางไม่ได้ — ถ้าต้องการลบบัญชีถาวร ให้ลบใน Firebase Console)')) return;
+  if (!confirm('ปฏิเสธคำขอนี้? (บัญชีล็อกอินจะยังอยู่แต่เข้าถึงข้อมูลส่วนกลางไม่ได้)')) return;
   try {
-    // เดิมลบเอกสารทิ้ง — พอผู้ถูกปฏิเสธเปิดหน้าใหม่ checkApproval จะสร้างคำขอให้อัตโนมัติ วนกลับเข้าคิวไม่รู้จบ
-    // จึงบันทึกเป็น "ปฏิเสธแล้ว" ค้างไว้แทน
-    await fbDb.collection('users').doc(uid).update({
-      approved: false, rejected: true, role: '',
-      rejectedBy: (cloudUser && cloudUser.email) || '', rejectedAt: new Date().toISOString()
-    });
+    await neonData.rejectUser(uid, (cloudUser && cloudUser.email) || '');
     toast('ปฏิเสธคำขอแล้ว');
     loadPendingUsers();
   } catch (e) { toast('ปฏิเสธไม่สำเร็จ: ' + thaiAuthError(e)); }
 };
-
-// ---- ผู้ใช้ทั้งหมด: partner เปลี่ยนบทบาท (Staff/Manager/Partner) ได้ทุกเมื่อ ----
+// ---- ผู้ใช้ทั้งหมด: partner เปลี่ยนบทบาทได้ ----
 async function loadAllUsers() {
   const wrap = $('cloudUsersList');
   if (!wrap) return;
   try {
-    const snap = await fbDb.collection('users').where('approved', '==', true).get();
-    if (snap.empty) { wrap.innerHTML = '<div class="wf-empty">ยังไม่มีผู้ใช้ที่อนุมัติแล้ว</div>'; return; }
+    const rows = await neonData.listApprovedUsers();
+    if (!rows || !rows.length) { wrap.innerHTML = '<div class="wf-empty">ยังไม่มีผู้ใช้ที่อนุมัติแล้ว</div>'; return; }
     let h = '';
-    snap.forEach(d => {
-      const u = d.data();
+    rows.forEach(u => {
       const r = u.role || 'staff';
-      const isMe = cloudUser && d.id === cloudUser.uid;
+      const isMe = cloudUser && u.uid === cloudUser.uid;
       const opt = v => `<option value="${v}"${r === v ? ' selected' : ''}>${CLOUD_ROLE_LABELS[v]}</option>`;
       h += `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 0; border-bottom:1px solid var(--border)">`
         + `<span style="flex:1; min-width:180px"><b>${escapeHtml(u.name || '(ไม่ระบุชื่อ)')}</b> · ${escapeHtml(u.email || '')}${isMe ? ' <span class="hint">(คุณ)</span>' : ''}</span>`
-        + `<select id="userRole_${safeId(d.id)}" style="width:auto; padding:6px 10px; font-size:.85rem">${opt('staff')}${opt('manager')}${opt('partner')}</select>`
-        + `<button class="btn-outline btn-sm" onclick="cloudChangeRole('${safeId(d.id)}')" type="button">บันทึกบทบาท</button>`
+        + `<select id="userRole_${safeId(u.uid)}" style="width:auto; padding:6px 10px; font-size:.85rem">${opt('staff')}${opt('manager')}${opt('partner')}</select>`
+        + `<button class="btn-outline btn-sm" onclick="cloudChangeRole('${safeId(u.uid)}')" type="button">บันทึกบทบาท</button>`
         + `</div>`;
     });
     wrap.innerHTML = h;
@@ -3603,78 +3698,63 @@ window.cloudChangeRole = async function (uid) {
   const sel = $('userRole_' + uid);
   if (!sel) return;
   const role = sel.value;
-  if (cloudUser && uid === cloudUser.uid && role !== 'partner'
-      && !CLOUD_ADMIN_EMAILS.includes((cloudUser.email || '').toLowerCase())) {
+  if (cloudUser && uid === cloudUser.uid && role !== 'partner') {
     if (!confirm('คุณกำลังลดบทบาทของตัวเองจาก Partner — จะไม่เห็นแผงจัดการนี้อีกจนกว่า partner คนอื่นจะคืนสิทธิ์ให้ ยืนยัน?')) return;
   }
   try {
-    await fbDb.collection('users').doc(uid).update({ role, roleChangedBy: cloudUser.email || '', roleChangedAt: new Date().toISOString() });
-    toast(`เปลี่ยนบทบาทเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้คนนั้นต้องรีเฟรชหน้า/ล็อกอินใหม่เพื่อให้สิทธิ์ใหม่มีผล`);
+    await neonData.setUserRole(uid, role);
+    toast(`เปลี่ยนบทบาทเป็น ${CLOUD_ROLE_LABELS[role] || role} แล้ว — ผู้ใช้คนนั้นต้องรีเฟรช/ล็อกอินใหม่เพื่อให้สิทธิ์ใหม่มีผล`);
     loadEmployeesFromUsers();
-    if (cloudUser && uid === cloudUser.uid) { cloudRole = role; renderCloudUI(); }
-    else loadAllUsers();
+    if (cloudUser && uid === cloudUser.uid) { cloudRole = role; renderCloudUI(); } else loadAllUsers();
   } catch (e) { toast('เปลี่ยนบทบาทไม่สำเร็จ: ' + thaiAuthError(e)); }
 };
+
 $('btnCloudSaveCfg').addEventListener('click', () => {
   try {
     const cfg = parseConfigText($('cloudCfgText').value);
     localStorage.setItem(CLOUD_CFG_KEY, JSON.stringify(cfg));
-    // ต้องโหลดหน้าใหม่จริง ๆ — firebase.initializeApp เรียกซ้ำไม่ได้ ถ้าแค่เรียก cloudInit()
-    // จะยังต่อโปรเจกต์เดิมทั้งที่ขึ้นว่าสำเร็จ (และผูก onAuthStateChanged ซ้อนเพิ่มอีกตัว)
     toast('บันทึกการตั้งค่าแล้ว — กำลังโหลดหน้าใหม่เพื่อเชื่อมต่อ...');
     setTimeout(() => location.reload(), 700);
-  } catch (e) {
-    toast('ตั้งค่าไม่สำเร็จ: ' + (e.message || e));
-  }
+  } catch (e) { toast('ตั้งค่าไม่สำเร็จ: ' + (e.message || e)); }
 });
 $('btnCloudClearCfg').addEventListener('click', () => {
-  if (!confirm('ล้างค่าที่ตั้งเองของเครื่องนี้ แล้วกลับไปใช้ค่าสำนักงานที่ฝังในแอป? (ข้อมูลในเครื่องและในระบบกลางไม่ถูกลบ)')) return;
+  if (!confirm('ล้างค่าที่ตั้งเองของเครื่องนี้ แล้วกลับไปใช้ค่าที่ฝังในแอป?')) return;
   localStorage.removeItem(CLOUD_CFG_KEY);
-  try { if (fbAuth) fbAuth.signOut(); } catch (e) {}
+  try { if (neonAuth) neonAuth.signOut(); } catch (e) {}
   cloudUser = null; cloudLoadFailed = false; stopSync();
   renderCloudUI();
-  toast('ล้างแล้ว — ใช้ค่าสำนักงานตามปกติ (ถ้าเคยวาง config อื่นไว้ ให้รีเฟรชหน้าหนึ่งครั้ง)');
+  toast('ล้างแล้ว — รีเฟรชหน้าหนึ่งครั้งเพื่อใช้ค่าที่ฝังในแอป');
 });
 $('btnCloudLogin').addEventListener('click', async () => {
   const email = $('cloudEmail').value.trim();
   const pass = $('cloudPass').value;
   if (!email || !pass) { toast('กรุณากรอกอีเมลและรหัสผ่าน'); return; }
   try {
-    await fbAuth.signInWithEmailAndPassword(email, pass);
+    await neonAuth.signIn(email, pass);
     $('cloudPass').value = '';
     toast('เข้าสู่ระบบสำเร็จ — กำลังซิงค์ข้อมูล...');
-  } catch (e) {
-    toast('เข้าสู่ระบบไม่สำเร็จ: ' + thaiAuthError(e));
-  }
+    await afterSignIn();
+    renderCloudUI();
+  } catch (e) { toast('เข้าสู่ระบบไม่สำเร็จ: ' + thaiAuthError(e)); }
 });
 $('btnCloudLogout').addEventListener('click', async () => {
-  // เครื่องที่ใช้ร่วมกันในสำนักงาน: ออกจากระบบแล้วต้องไม่เหลือข้อมูลลูกค้าให้คนถัดไปเปิดดูได้
-  // ก่อนล้าง ต้องพยายามส่งงานที่ค้างขึ้นระบบกลางให้ครบก่อน แล้วบอกให้ชัดว่าอะไรกู้คืนได้ อะไรไม่ได้
-  if (unsyncedCompanies().length) {
-    toast('กำลังส่งข้อมูลที่ค้างขึ้นระบบกลางก่อนออกจากระบบ...');
-    await cloudPushNow();
-  }
+  if (unsyncedCompanies().length) { toast('กำลังส่งข้อมูลที่ค้างขึ้นระบบกลางก่อนออกจากระบบ...'); await cloudPushNow(); }
   const stillPending = unsyncedCompanies();
   const files = await attCountAll();
   let msg = 'ออกจากระบบและล้างข้อมูลในเครื่องนี้?\n\n'
     + '• ข้อมูลบริษัทจะถูกลบออกจากเครื่องนี้ — ยังอยู่บนระบบกลาง ล็อกอินใหม่แล้วได้กลับมาครบ\n';
   if (files) msg += `• เอกสารแนบ ${files} ไฟล์จะถูกลบถาวร — ไฟล์แนบไม่ได้ขึ้นระบบกลาง กู้คืนไม่ได้\n`;
-  if (stillPending.length) {
-    msg += `\n⛔ ยังมี ${stillPending.length} บริษัทที่ส่งขึ้นระบบกลางไม่สำเร็จ — ข้อมูลส่วนนี้จะหายถาวร\n`
-        + 'แนะนำให้กด "ยกเลิก" แล้ว Export ข้อมูลเก็บไว้ก่อน\n';
-  }
+  if (stillPending.length) msg += `\n⛔ ยังมี ${stillPending.length} บริษัทที่ส่งขึ้นระบบกลางไม่สำเร็จ — ข้อมูลส่วนนี้จะหายถาวร\nแนะนำให้กด "ยกเลิก" แล้ว Export ข้อมูลเก็บไว้ก่อน\n`;
   msg += '\nกด "ยกเลิก" เพื่ออยู่ในระบบต่อ';
   if (!confirm(msg)) return;
-  try { await fbAuth.signOut(); } catch (e) {}
+  try { if (neonAuth) neonAuth.signOut(); } catch (e) {}
+  cloudUser = null; cloudApproved = false; cloudRole = ''; stopSync();
   await wipeLocalData();
+  renderCloudUI();
   toast('ออกจากระบบและล้างข้อมูลในเครื่องนี้แล้ว');
 });
-$('btnCloudSyncNow').addEventListener('click', async () => {
-  toast('กำลังซิงค์...');
-  await cloudPushNow();
-});
+$('btnCloudSyncNow').addEventListener('click', async () => { toast('กำลังซิงค์...'); await pullAll(true).catch(() => {}); await cloudPushNow(); });
 
-// ---- สมัครใช้งานใหม่ (รอ partner อนุมัติ) ----
 $('btnCloudShowSignup').addEventListener('click', () => { cloudSignupMode = true; renderCloudUI(); });
 $('btnCloudCancelSignup').addEventListener('click', () => { cloudSignupMode = false; renderCloudUI(); });
 $('btnCloudSignup').addEventListener('click', async () => {
@@ -3686,27 +3766,27 @@ $('btnCloudSignup').addEventListener('click', async () => {
   if (p1.length < 6) { toast('รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'); return; }
   if (p1 !== p2) { toast('รหัสผ่านสองช่องไม่ตรงกัน'); return; }
   try {
-    const cred = await fbAuth.createUserWithEmailAndPassword(email, p1);
-    await fbDb.collection('users').doc(cred.user.uid).set({
-      email, name, approved: false, role: 'staff', requestedAt: new Date().toISOString()
-    });
+    await neonAuth.signUp(email, p1, name);
     $('signupPass').value = ''; $('signupPass2').value = '';
     cloudSignupMode = false;
+    await afterSignIn();
+    // เก็บชื่อลงโปรไฟล์คำขอ (เผื่อ createOwnProfile สร้างด้วยชื่อว่าง)
+    try { if (cloudUser && neonData) await neonData._api('PATCH', '/app_user?uid=eq.' + encodeURIComponent(cloudUser.uid), { body: { name } }); } catch (e) {}
     toast('สมัครสำเร็จ — รอ partner อนุมัติ');
-  } catch (e) {
-    toast('สมัครไม่สำเร็จ: ' + thaiAuthError(e));
-  }
+    renderCloudUI();
+  } catch (e) { toast('สมัครไม่สำเร็จ: ' + thaiAuthError(e)); }
 });
 $('btnCloudCheckApproval').addEventListener('click', async () => {
   await checkApproval();
-  if (cloudApproved) { toast('ได้รับอนุมัติแล้ว — กำลังซิงค์ข้อมูล...'); startSync(); }
+  if (cloudApproved) { toast('ได้รับอนุมัติแล้ว — กำลังซิงค์ข้อมูล...'); await startSync(); }
   else { toast('ยังไม่ได้รับอนุมัติ — ลองใหม่ภายหลัง หรือติดต่อ partner'); }
   renderCloudUI();
 });
 $('btnCloudLogoutPending').addEventListener('click', async () => {
-  // บัญชีที่ยังรออนุมัติจะ push ขึ้นระบบกลางไม่ได้ ข้อมูลที่กรอกไว้จึงมีอยู่แค่ในเครื่องนี้ที่เดียว
-  // ถ้าล้างทิ้งตอนออกจากระบบจะหายถาวรโดยกู้ไม่ได้ — จึงออกจากระบบเฉย ๆ ไม่ล้าง
-  try { await fbAuth.signOut(); toast('ออกจากระบบแล้ว — ข้อมูลที่กรอกไว้ยังอยู่ในเครื่องนี้ ใช้โหมดออฟไลน์ต่อได้'); } catch (e) {}
+  try { if (neonAuth) neonAuth.signOut(); } catch (e) {}
+  cloudUser = null; cloudApproved = false; cloudRole = ''; stopSync();
+  renderCloudUI();
+  toast('ออกจากระบบแล้ว — ข้อมูลที่กรอกไว้ยังอยู่ในเครื่องนี้ ใช้โหมดออฟไลน์ต่อได้');
 });
 
 /* ---------- รายการงาน (แดชบอร์ดหลังล็อกอิน) ---------- */
