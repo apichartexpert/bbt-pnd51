@@ -1,2 +1,4 @@
 *.xlsx
 *.xls
+__pycache__/
+webapp/data/
