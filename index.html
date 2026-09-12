@@ -2,6 +2,15 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
+<script>
+/* C1 (SSO ก้อน C): อ่านตั๋วจาก URL fragment แล้ว strip ทิ้งทันที "ก่อนโค้ดอื่นใดทำงาน"
+   — ห้ามให้ตั๋วหลุดเข้า log/analytics/referrer · ส่งต่อให้ server ผ่าน POST body เท่านั้น */
+(function(){
+  var m=/[#&]ticket=([^&]+)/.exec(location.hash||'');
+  if(m){ window.__BBT_TICKET=decodeURIComponent(m[1]);
+         history.replaceState(null,'',location.pathname+location.search); }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>โปรแกรมคำนวณประมาณการ ภ.ง.ด.51</title>
 <style>
@@ -351,6 +360,13 @@
   table.history td.amt, table.history th.amt { text-align: right; font-variant-numeric: tabular-nums; }
   table.history th { color: var(--gray); font-size: .78rem; }
   .empty { color: #9aa3ae; font-size: .88rem; text-align: center; padding: 16px 0; }
+
+  /* จอล็อกเมื่อผลตรวจสิทธิ์ SSO หมดอายุ 15 นาที (C4) */
+  #ssoLock { position: fixed; inset: 0; z-index: 10000; background: rgba(20,26,34,.78);
+    align-items: center; justify-content: center; padding: 16px; }
+  #ssoLock .box { background: #fff; border-radius: 16px; padding: 28px 26px; max-width: 420px;
+    text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+  #ssoLock .box .msg { margin: 8px 0 16px; line-height: 1.6; }
 
   /* ===== print report ===== */
   #printReport { display: none; }
@@ -797,6 +813,16 @@
 
   <!-- ===== รายงานสำหรับพิมพ์ ===== -->
   <div id="printReport"></div>
+
+  <!-- จอล็อกเมื่อผลตรวจสิทธิ์หมดอายุ 15 นาที (SSO C4 — จับเวลาในเครื่อง ไม่มี heartbeat) -->
+  <div id="ssoLock" class="screen-only" style="display:none">
+    <div class="box">
+      <div style="font-size:34px">🔒</div>
+      <div class="msg" id="ssoLockMsg">หน้าจอถูกล็อก — ผลตรวจสิทธิ์เกิน 15 นาที<br>กด "ตรวจสิทธิ์อีกครั้ง" เพื่อใช้งานต่อ</div>
+      <a class="btn-outline btn-sm" id="ssoLockHome" href="#" style="display:none; text-decoration:none; padding:8px 14px; border-radius:12px; border:1.5px solid var(--blue); color:var(--blue)">⌂ กลับบ้านกลาง</a>
+      <button class="btn-primary btn-sm" onclick="ssoUnlock()" type="button">ตรวจสิทธิ์อีกครั้ง</button>
+    </div>
+  </div>
   <div id="toast" class="screen-only"></div>
 </div>
 
@@ -820,6 +846,138 @@ parse_Primary(n.content)}catch(l){}a="/EncryptionInfo";n=Qe.find(e,a);if(!n||!n.
 /* ---------- utilities ---------- */
 const fmt = n => (isFinite(n) ? n : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const $ = id => document.getElementById(id);
+
+/* ---------- โหมดบ้าน (webapp/) + SSO บ้านกลาง (spec ก้อน C — คู่มือใน SSO-HOUSE.md) ----------
+   backend ฉีด __BBT_REMOTE/__BBT_SSO เข้ามาตอนเสิร์ฟหน้า · เปิดไฟล์ตรง (file://) = โหมดออฟไลน์เดิมทุกอย่าง */
+const REMOTE = (typeof window !== 'undefined') && !!window.__BBT_REMOTE;
+const API_BASE = (typeof window !== 'undefined' && window.__API_BASE) || '';
+const SSO = REMOTE && !!window.__BBT_SSO;
+const SSO_HOME = (typeof window !== 'undefined' && window.__BBT_HOME) || '';     // {BBT_URL} — ปุ่มกลับบ้านกลาง → /switch (C10)
+const SSO_GATE = (typeof window !== 'undefined' && window.__BBT_GATE) || '';     // ประตูขาเข้า GET /api/sso/pnd51
+const SSO_CHECK_AGE = ((typeof window !== 'undefined' && window.__BBT_CHECK_AGE) || 900) * 1000;
+const SSO_FULL_WINDOW = ((typeof window !== 'undefined' && window.__BBT_FULL_WINDOW) || 300) * 1000;
+const SSO_ROLE_LABELS = { viewer: 'Viewer (ดูอย่างเดียว)', editor: 'Editor (จัดทำ/ตรวจสอบ)', full: 'Full (อนุมัติ/ผู้จัดการ)' };
+let ssoUser = null, ssoRole = '', ssoCheckedAt = 0, ssoAtMs = 0;
+function gotoGate() {
+  /* พาผู้ใช้ผ่านประตูบ้านกลางใหม่ พร้อม path หน้าปัจจุบันให้เด้งกลับ (relative path ตามกติกาประตู) */
+  const p = (location.pathname || '/') + (location.search || '');
+  location.href = SSO_GATE + '?path=' + encodeURIComponent(p);
+}
+async function apiReq(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method, headers: body != null ? { 'Content-Type': 'application/json' } : {},
+    body: body != null ? JSON.stringify(body) : undefined, credentials: 'same-origin'
+  });
+  if (SSO) {
+    const ck = res.headers.get('X-SSO-Checked-At');
+    if (ck) { const t = Date.parse(ck + (ck.endsWith('Z') ? '' : 'Z')); if (t) ssoCheckedAt = t; }
+    const rl = res.headers.get('X-SSO-Role'); if (rl && rl !== ssoRole) { ssoRole = rl; }
+  }
+  if (!res.ok) {
+    let code = ''; try { const j = await res.json(); code = j.error || j.detail || ''; } catch (e) {}
+    if (SSO && res.status === 401 && path !== '/api/sso/login') { gotoGate(); }
+    const err = new Error(ssoErrText(code) || ('HTTP ' + res.status)); err.status = res.status; err.code = code; throw err;
+  }
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+function ssoErrText(code) {
+  return ({
+    no_session: 'ยังไม่ได้เข้าสู่ระบบผ่านบ้านกลาง', badge_invalid: 'บัตรถูกยกเลิก (อาจผ่านประตูจากเครื่องอื่น) — ต้องผ่านประตูใหม่',
+    badge_expired: 'บัตรหมดอายุ — ต้องผ่านประตูบ้านกลางใหม่', disabled: 'บัญชีผู้ใช้ถูกปิดที่บ้านกลาง',
+    no_permission: 'ยังไม่มีสิทธิ์เข้าระบบนี้ — ติดต่อ admin บ้านกลาง', ticket_rejected: 'ตั๋วไม่ผ่านการตรวจ',
+    central_down: 'บ้านกลางขัดข้อง — ดูข้อมูลที่เปิดอยู่ต่อได้ แต่ยังเปิด/บันทึกข้อมูลใหม่ไม่ได้',
+    central_rate_limited: 'บ้านกลางพักการเรียกชั่วคราว (429) — รอ 5 นาทีแล้วลองใหม่',
+    house_key_error: 'กุญแจเข้าบ้านมีปัญหา — แจ้งผู้ดูแลระบบตรวจ env HOUSE_KEY',
+    role_viewer: 'สิทธิ์ viewer — ดูอย่างเดียว แก้ไข/บันทึกไม่ได้', need_full: 'ต้องเป็นระดับ full (ผู้อนุมัติ) เท่านั้น',
+    need_resso: 'การกระทำระดับผู้อนุมัติต้องยืนยันตัวตนกับบ้านกลางใหม่ (re-SSO) ก่อน',
+  })[code] || '';
+}
+function ssoApply(r) {
+  if (!r) return;
+  ssoUser = r.user || null; ssoRole = r.role || '';
+  ssoCheckedAt = Date.parse((r.checked_at || '') + 'Z') || Date.now();
+  ssoAtMs = Date.parse((r.sso_at || '') + 'Z') || 0;
+}
+function ssoFatal(msg, showGate) {
+  /* จอทางตันแบบสุภาพ (เช่น 403 ไม่มีสิทธิ์ / กุญแจผิด) — ต้องมีลิงก์กลับบ้านกลาง ไม่ให้เป็นทางตัน (C10) */
+  document.body.innerHTML =
+    '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f2f2f7">'
+    + '<div style="background:#fff;border-radius:16px;padding:32px;max-width:440px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.08)">'
+    + '<div style="font-size:40px">🚪</div><h2 style="margin:10px 0 6px">ภ.ง.ด.51 (BBT)</h2>'
+    + '<p style="color:#5a6472">' + escapeHtml(msg) + '</p>'
+    + (SSO_HOME ? '<a style="display:inline-block;margin-top:8px;padding:10px 18px;border-radius:12px;background:#6fae2b;color:#fff;font-weight:600;text-decoration:none" href="' + escapeHtml(SSO_HOME) + '/switch">⌂ กลับบ้านกลาง</a>' : '')
+    + (showGate ? ' <a style="display:inline-block;margin-top:8px;padding:10px 18px;border-radius:12px;border:1.5px solid #6fae2b;color:#6fae2b;font-weight:600;text-decoration:none" href="#" onclick="gotoGate();return false">ลองผ่านประตูอีกครั้ง</a>' : '')
+    + '</div></div>';
+}
+function ssoWipeLocal() {
+  /* มติ Meth 25 ส.ค. 2569 (C9): SSO ขึ้นจริง = โหมดออฟไลน์ปิดถาวร — ล้างข้อมูลลูกค้าที่ค้างใน localStorage ของเครื่องนี้
+     (เอกสารแนบใน IndexedDB คงไว้ — โหมดบ้านยังใช้เป็นที่เก็บไฟล์แนบประจำเครื่องตามดีไซน์เดิม) */
+  try { localStorage.removeItem(LS_KEY); } catch (e) {}
+}
+async function ssoInit() {
+  /* คืน true = พร้อมโหลดข้อมูลต่อ · false = จบที่จอ error/redirect แล้ว */
+  if (!SSO) return true;
+  ssoWipeLocal();
+  const lockHome = $('ssoLockHome'); if (lockHome && SSO_HOME) { lockHome.href = SSO_HOME + '/switch'; lockHome.style.display = 'inline-block'; }
+  if (window.__BBT_TICKET) {
+    const t = window.__BBT_TICKET; window.__BBT_TICKET = null;
+    try {
+      ssoApply(await apiReq('POST', '/api/sso/login', { ticket: t }));
+      sessionStorage.removeItem('bbt-sso-fail');
+      return true;
+    } catch (e) {
+      if (e.status === 401) {
+        /* ตั๋วไม่ผ่าน → ผ่านประตูใหม่ · แต่ถ้าใบใหม่ก็ยังไม่ผ่าน = ปัญหากุญแจ config — หยุดวน (C2) */
+        const n = (+sessionStorage.getItem('bbt-sso-fail') || 0) + 1; sessionStorage.setItem('bbt-sso-fail', n);
+        if (n >= 2) { ssoFatal('ตั๋วไม่ผ่านการตรวจติดกัน ' + n + ' ครั้ง — น่าจะเป็นปัญหากุญแจ/ตั้งค่าระบบ กรุณาแจ้งผู้ดูแล (อย่าลองซ้ำรัว ๆ จะโดนพักชั่วคราว)', false); return false; }
+        gotoGate(); return false;
+      }
+      if (e.status === 403) { ssoFatal('ยังไม่มีสิทธิ์เข้าระบบนี้ — ติดต่อ admin บ้านกลางเพื่อขอสิทธิ์ห้อง ภ.ง.ด.51', false); return false; }
+      ssoFatal(e.message || 'เชื่อมต่อไม่ได้', true); return false;
+    }
+  }
+  try { ssoApply(await apiReq('GET', '/api/sso/me')); return true; }
+  catch (e) {
+    if (e.status === 401) { return false; }                        /* apiReq พาไปประตูแล้ว */
+    if (e.status === 403) { ssoFatal(ssoErrText(e.code) || 'ไม่มีสิทธิ์เข้าใช้งาน', false); return false; }
+    ssoFatal(e.message || 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้', true); return false;
+  }
+}
+/* จอล็อก 15 นาที — จับเวลาในเครื่องอย่างเดียว (ห้าม heartbeat — มติ r6) ปลดล็อกด้วยการตรวจใหม่ผ่านเท่านั้น */
+function ssoLockTick() {
+  if (!SSO || !ssoUser) return;
+  const stale = Date.now() - ssoCheckedAt > SSO_CHECK_AGE;
+  $('ssoLock').style.display = stale ? 'flex' : 'none';
+}
+window.ssoUnlock = async function () {
+  try {
+    ssoApply(await apiReq('POST', '/api/sso/refresh'));
+    $('ssoLock').style.display = 'none'; toast('ตรวจสิทธิ์ผ่าน — ใช้งานต่อได้');
+  } catch (e) {
+    if (e.status === 401) return;                                  /* พาไปประตูแล้ว */
+    if (e.status === 403) { ssoFatal(ssoErrText(e.code) || 'สิทธิ์ถูกเปลี่ยน', false); return; }
+    $('ssoLockMsg').innerHTML = '⚠ ' + escapeHtml(e.message) + '<br><span class="hint">หน้าจอยังล็อกอยู่จนกว่าจะตรวจสิทธิ์ผ่าน (กติกา C5)</span>';
+  }
+};
+function roleAtLeast(need) {
+  if (!SSO) return true;
+  const ord = { viewer: 0, editor: 1, full: 2 };
+  return (ord[ssoRole] ?? -1) >= (ord[need] ?? 99);
+}
+function ssoFreshForFull() { return SSO && ssoAtMs && (Date.now() - ssoAtMs) <= SSO_FULL_WINDOW; }
+/* การกระทำระดับ full ของบ้านนี้ (ตาราง map ใน SSO-HOUSE.md): อนุมัติ · ตีกลับหลังส่งอนุมัติ · เปิดแก้ไขใหม่ */
+const FULL_ACTIONS = ['approve', 'approve-reject', 'reopen'];
+function ssoGuardFull(what) {
+  /* คืน true = ผ่านไปทำได้ · false = จัดการ (ชวน re-SSO) แล้ว */
+  if (!SSO) return true;
+  if (!roleAtLeast('full')) { toast(what + 'ต้องเป็นระดับ full (ผู้อนุมัติ) เท่านั้น'); return false; }
+  if (!ssoFreshForFull()) {
+    if (confirm(what + 'ต้องยืนยันตัวตนกับบ้านกลางใหม่ (re-SSO) ก่อนทุกครั้ง — ไปที่ประตูบ้านกลางตอนนี้?\n(ผ่านประตูแล้วจะเด้งกลับมาหน้านี้ แล้วกดซ้ำอีกครั้ง)')) gotoGate();
+    return false;
+  }
+  return true;
+}
 
 let toastTimer = null;
 function toast(msg) {
@@ -883,6 +1041,10 @@ function storageWriteFailed() {
 // safe storage: ใช้ localStorage ได้เมื่อเบราว์เซอร์อนุญาต มิฉะนั้นเก็บชั่วคราวในหน่วยความจำ
 const safeStore = (() => {
   let mem = null;
+  if (REMOTE) {
+    // โหมดบ้าน: ข้อมูลจริงอยู่บนเซิร์ฟเวอร์ — ห้ามทิ้งข้อมูลลูกค้าไว้ใน localStorage ของเครื่องที่ใช้ร่วมกัน
+    return { get: () => mem, set: v => { mem = v; return true; }, clear: () => { mem = null; } };
+  }
   try {
     const k = '__pnd51_test__';
     localStorage.setItem(k, '1'); localStorage.removeItem(k);
@@ -985,7 +1147,7 @@ function saveDB() {
     if (companyStamp[c.id] !== probe) { c._syncAt = now; companyStamp[c.id] = probe; }
   });
   safeStore.set(JSON.stringify(db));
-  cloudSchedulePush();
+  if (REMOTE) houseSchedulePush(); else cloudSchedulePush();
 }
 function newCompany() {
   return { id: 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
@@ -1111,6 +1273,8 @@ $('btnNewCompany').addEventListener('click', () => {
 });
 $('btnDeleteCompany').addEventListener('click', () => {
   const c = activeCompany();
+  // โหมดบ้าน: ลบบริษัท = การทำลายข้อมูลถาวร → ระดับ full + re-SSO (server บังคับซ้ำอีกชั้น)
+  if (REMOTE && SSO && !ssoGuardFull('การลบบริษัท')) return;
   if (!confirm(`ลบบริษัท "${c.name || '(ยังไม่ตั้งชื่อ)'}" และประวัติทั้งหมดของบริษัทนี้?`)) return;
   attDeleteByCompany(c.id);   // ลบไฟล์แนบของบริษัทนี้ในเครื่องด้วย
   db.companies = db.companies.filter(x => x.id !== c.id);
@@ -1225,7 +1389,8 @@ function populateAssignSelects() {
 }
 function renderEmployeeList() {
   const wrap = $('empList');
-  const cloudMode = !!(cloudUser && cloudApproved);   // เชื่อมต่อระบบกลาง: รายชื่อมาจากบัญชีผู้ใช้ แก้มือไม่ได้
+  // โหมดบ้าน = รายชื่อมาจากผู้ใช้บ้านกลางที่เคยเข้าระบบนี้ (mapping — C6) แก้มือไม่ได้ เช่นเดียวกับโหมด Firebase เดิม
+  const cloudMode = REMOTE || !!(cloudUser && cloudApproved);
   $('empAddRow').style.display = cloudMode ? 'none' : '';
   $('empIoNote').style.display = cloudMode ? 'none' : '';
   if (cloudMode) {
@@ -1699,6 +1864,8 @@ function signoffFor(wf, role) { return (wf.current && wf.current[role]) ? wf.cur
 // เดิมชื่อผู้เซ็นมาจาก dropdown ล้วน ๆ ไม่ผูกกับบัญชีที่ล็อกอิน staff จึงบันทึกว่า "อนุมัติโดย <ชื่อ partner>" ได้
 // (นี่คือหลักฐานการสอบทานงานยื่นภาษี ไม่ใช่แค่ข้อความประกอบ)
 function cloudSelf() {
+  // โหมดบ้าน: ตัวตนมาจาก session SSO ของบ้านกลาง — "ใครกด คนนั้นเซ็น" (server ประทับซ้ำอีกชั้น)
+  if (REMOTE) return ssoUser ? { name: ssoUser.display_name || String(ssoUser.id || ''), email: '', uid: ssoUser.id || '' } : null;
   if (!(cloudUser && cloudApproved)) return null;
   const em = (cloudUser.email || '').toLowerCase();
   const hit = (db.employees || []).find(e => (e.email || '').toLowerCase() === em);
@@ -1772,6 +1939,12 @@ function renderWorkflow() {
   // สิทธิ์ตามบทบาทบัญชีที่ล็อกอิน (ถ้าไม่ได้ล็อกอิน = โหมดออฟไลน์ ไม่จำกัด):
   // staff = ส่งตรวจ · manager = ส่งตรวจ+ตรวจสอบ · partner = ทุกหน้าที่ (จัดทำ/ตรวจสอบ/อนุมัติ)
   const gate = act => {
+    if (REMOTE && SSO) {
+      // โหมดบ้าน: สิทธิ์จากผลตรวจสดของบ้านกลาง (C6) — viewer ทำอะไรไม่ได้ · full เท่านั้นที่อนุมัติ/เปิดใหม่
+      if (!ssoRole || ssoRole === 'viewer') return false;
+      if (act === 'approve' || act === 'reopen') return ssoRole === 'full';
+      return true;
+    }
     if (!cloudUser || !cloudApproved || !cloudRole) return true;
     if (act === 'submit') return true;   // ทุกบทบาทเป็นผู้จัดทำได้
     if (act === 'review') return cloudRole === 'manager' || cloudRole === 'partner';
@@ -1805,7 +1978,8 @@ function renderWorkflow() {
     else needRole = 'Partner';
   }
   if (!b && needRole) {
-    b = `<span class="hint">บทบาทของคุณ (${CLOUD_ROLE_LABELS[cloudRole] || cloudRole}) ไม่มีสิทธิ์ดำเนินการขั้นนี้ — ต้องเป็น ${needRole}</span>`;
+    const myRole = (REMOTE && SSO) ? (SSO_ROLE_LABELS[ssoRole] || ssoRole) : (CLOUD_ROLE_LABELS[cloudRole] || cloudRole);
+    b = `<span class="hint">บทบาทของคุณ (${myRole}) ไม่มีสิทธิ์ดำเนินการขั้นนี้ — ต้องเป็น ${needRole}</span>`;
   }
   b += `<button class="btn-outline btn-sm" onclick="exportCompany()" type="button">📎 ส่งไฟล์ให้ผู้ตรวจ/อนุมัติ</button>`;
   $('wfButtons').innerHTML = b;
@@ -1829,6 +2003,12 @@ function renderWorkflow() {
 
 // สิทธิ์ตามบทบาทของการกระทำแต่ละอย่าง (ใช้ทั้งตอนวาดปุ่มและตอนสั่งงานจริง)
 function wfActionAllowed(action) {
+  if (REMOTE && SSO) {
+    // ตาราง map บ้านกลาง → บ้านนี้ (SSO-HOUSE.md): viewer=ดูอย่างเดียว · editor=จัดทำ+ตรวจ+ยื่น/ชำระ · full=อนุมัติ/ตีกลับ/เปิดใหม่
+    if (!ssoRole || ssoRole === 'viewer') return false;
+    if (FULL_ACTIONS.includes(action)) return ssoRole === 'full';
+    return true;
+  }
   if (!cloudUser || !cloudApproved || !cloudRole) return true;   // โหมดออฟไลน์ ไม่จำกัด
   if (action === 'submit') return true;
   if (action === 'review-pass' || action === 'send-approve' || action === 'review-reject') {
@@ -1845,9 +2025,12 @@ window.wfDo = function (action) {
   // ตรวจสิทธิ์ตรงนี้ด้วย ไม่ใช่แค่ตอนวาดปุ่ม — wfDo เรียกจาก console ได้
   // (ยังไม่ใช่ความปลอดภัยจริง ตัวกั้นจริงคือ Firestore Rules ฝั่งเซิร์ฟเวอร์)
   if (!wfActionAllowed(action)) {
-    toast(`บทบาทของคุณ (${CLOUD_ROLE_LABELS[cloudRole] || cloudRole}) ไม่มีสิทธิ์ทำรายการนี้`);
+    toast(`บทบาทของคุณ (${(REMOTE && SSO) ? (SSO_ROLE_LABELS[ssoRole] || ssoRole) : (CLOUD_ROLE_LABELS[cloudRole] || cloudRole)}) ไม่มีสิทธิ์ทำรายการนี้`);
     return;
   }
+  // การกระทำระดับ full (อนุมัติ/ตีกลับหลังส่งอนุมัติ/เปิดแก้ไขใหม่) ต้องเพิ่งผ่านประตูบ้านกลางมา (re-SSO — C4)
+  // server ตรวจซ้ำอีกชั้นตอน push · เช็คก่อนตรงนี้เพื่อไม่ให้สถานะบนจอเปลี่ยนแล้วค่อยถูกปฏิเสธ
+  if (REMOTE && SSO && FULL_ACTIONS.includes(action) && !ssoGuardFull('การ' + ({ approve: 'อนุมัติ', 'approve-reject': 'ตีกลับ', reopen: 'เปิดแก้ไขใหม่' }[action] || action))) return;
   const me = cloudSelf();
   const name = me ? me.name : $('wfActor').value;   // เชื่อมต่อระบบกลาง = เซ็นในนามบัญชีที่ล็อกอินเสมอ
   const note = $('wfNote').value.trim();
@@ -3133,6 +3316,7 @@ function loadScript(src) {
   });
 }
 async function cloudInit() {
+  if (REMOTE) { renderCloudUI(); return; }   // โหมดบ้านไม่โหลด Firebase เลย (C9)
   renderCloudUI();
   const cfg = getCloudConfig();
   if (!cfg) return;
@@ -3493,6 +3677,7 @@ function thaiAuthError(e) {
   return (e && e.message) || String(e);
 }
 function renderCloudUI() {
+  if (REMOTE) { houseRenderCard(); return; }   // โหมดบ้าน: Firebase ถูกปิดทั้งชุด (C9 — ช่องเข้ามีทางเดียวคือประตูบ้านกลาง)
   const badge = $('cloudBadge');
   const cfg = getCloudConfig();
   ['cloudSetup', 'cloudLogin', 'cloudSignup', 'cloudPending', 'cloudConnected'].forEach(id => { $(id).style.display = 'none'; });
@@ -3958,14 +4143,156 @@ $('btnWzNext').addEventListener('click', () => goToStep(currentStep + 1));
 document.addEventListener('input', e => { if (e.target.closest('.wizard-page')) renderProgressBar(); });
 document.addEventListener('change', e => { if (e.target.closest('.wizard-page')) renderProgressBar(); });
 
+/* ---------- โหมดบ้าน: ชั้นข้อมูลผ่าน API (แทน Firestore) — ไม่มี realtime/heartbeat (C4 ห้าม traffic อัตโนมัติ) ---------- */
+let housePushTimer = null;
+function houseSchedulePush() {
+  if (applyingRemote) return;
+  clearTimeout(housePushTimer);
+  housePushTimer = setTimeout(housePushNow, 1200);
+}
+async function housePushNow() {
+  if (!REMOTE) return;
+  cloudPushBlocked = [];
+  let ok = 0, failed = 0;
+  const items = [];
+  db.companies.forEach(c => {
+    const j = JSON.stringify(c);
+    if (pushedJson[c.id] === j) return;
+    if (j.length > DOC_BYTES_MAX) { cloudPushBlocked.push(c.name || '(ยังไม่ตั้งชื่อบริษัท)'); return; }
+    items.push({ key: c.id, run: () => apiReq('PUT', '/api/companies/' + encodeURIComponent(c.id), c), mark: j });
+  });
+  deletedIdList().forEach(id => {
+    if (db.delPushed[id]) return;
+    items.push({ key: '_del_' + id, run: () => apiReq('DELETE', '/api/companies/' + encodeURIComponent(id)), mark: '1', delId: id });
+  });
+  const tj = JSON.stringify(db.tombs || {});
+  if (pushedJson['_tombs'] !== tj) items.push({ key: '_tombs', run: () => apiReq('PUT', '/api/tombs', db.tombs || {}), mark: tj });
+  for (const o of items) {
+    try { await o.run(); pushedJson[o.key] = o.mark; if (o.delId) db.delPushed[o.delId] = 1; ok++; }
+    catch (e) {
+      delete pushedJson[o.key]; failed++;
+      toast('บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จ: ' + e.message);
+      if (e.status === 401) return;   // apiReq พาไปประตูแล้ว — เลิกยิงต่อ
+    }
+  }
+  renderPushStatus(ok, failed);
+}
+window.houseSyncNow = async function () {
+  /* ดึงของล่าสุดจากเซิร์ฟเวอร์มารวม (กติกาเดียวกับ startSync เดิม: ใครใหม่กว่าใช้อันนั้น เสมอกันเครื่องนี้ชนะ) แล้วส่งของค้างขึ้น */
+  try {
+    const remote = await apiReq('GET', '/api/data');
+    applyingRemote = true;
+    mergeTombs(remote.tombs, null);
+    (remote.companies || []).forEach(rc => {
+      if (!rc || !rc.id || isDeleted(rc.id)) return;
+      const idx = db.companies.findIndex(x => x.id === rc.id);
+      if (idx >= 0) {
+        if ((rc._syncAt || 0) > (db.companies[idx]._syncAt || 0)) db.companies[idx] = rc;
+        else { delete pushedJson[rc.id]; return; }        // ของเราใหม่กว่า/เสมอ → รอบ push ถัดไปส่งขึ้นทับ
+      } else db.companies.push(rc);
+      companyStamp[rc.id] = companyProbe(rc);
+      pushedJson[rc.id] = JSON.stringify(rc);
+    });
+    db.companies.filter(c => isDeleted(c.id)).forEach(c => attDeleteByCompany(c.id));
+    db.companies = db.companies.filter(c => !isDeleted(c.id));
+    if (db.companies.length === 0) db.companies.push(newCompany());
+    if (!db.companies.some(c => c.id === db.activeId)) db.activeId = db.companies[0].id;
+    if (Array.isArray(remote.employees) && remote.employees.length) { db.employees = remote.employees; }
+    applyingRemote = false;
+    renderCompanySelect(); loadCompanyToForm(); renderEmployeeList();
+    await housePushNow();
+    toast('ซิงค์กับเซิร์ฟเวอร์แล้ว');
+  } catch (e) { applyingRemote = false; toast('ซิงค์ไม่สำเร็จ: ' + e.message); }
+};
+function houseRenderCard() {
+  /* การ์ด "ระบบกลาง" ในโหมดบ้าน: สถานะ session + ปุ่มซิงค์ + ลิงก์กลับบ้านกลาง (Firebase ถูกปิดทั้งชุด — C9) */
+  ['cloudSetup', 'cloudLogin', 'cloudSignup', 'cloudPending', 'cloudConnected'].forEach(id => { $(id).style.display = 'none'; });
+  const badge = $('cloudBadge');
+  if (SSO && ssoUser) {
+    badge.className = 'wf-badge wf-approved';
+    badge.textContent = 'เข้าสู่ระบบผ่านบ้านกลาง: ' + (ssoUser.display_name || ssoUser.id)
+      + ' · ' + (SSO_ROLE_LABELS[ssoRole] || ssoRole);
+  } else {
+    badge.className = 'wf-badge wf-reviewed';
+    badge.textContent = SSO ? 'กำลังตรวจสอบสิทธิ์กับบ้านกลาง...' : 'โหมดเว็บแอป — ข้อมูลเก็บบนเซิร์ฟเวอร์ของสำนักงาน';
+  }
+  let row = $('houseRow');
+  if (!row) {
+    row = document.createElement('div');
+    row.id = 'houseRow'; row.className = 'btn-row'; row.style.marginTop = '4px';
+    row.innerHTML = '<button class="btn-outline btn-sm" onclick="houseSyncNow()" type="button">🔄 ซิงค์เดี๋ยวนี้</button>'
+      + (SSO_HOME ? '<a class="btn-outline btn-sm" style="text-decoration:none; display:inline-flex; align-items:center" href="'
+          + escapeHtml(SSO_HOME) + '/switch">⌂ กลับบ้านกลาง</a>' : '');
+    $('cloudCard').appendChild(row);
+  }
+  renderJobsDashboard();
+}
+function ssoDecorate() {
+  /* ตกแต่ง UI ตามโหมด/สิทธิ์ — เรียกครั้งเดียวหลังข้อมูลพร้อม */
+  if (SSO_HOME) {
+    /* C10: ลิงก์ "กลับบ้านกลาง" หาเจอจากทุกหน้า — ชี้ /switch ห้ามชี้ /home */
+    const bar = $('topNav');
+    if (bar && !$('homeLink')) {
+      const a = document.createElement('a');
+      a.id = 'homeLink'; a.className = 'btn-outline btn-sm'; a.href = SSO_HOME + '/switch';
+      a.textContent = '⌂ กลับบ้านกลาง'; a.style.textDecoration = 'none';
+      bar.insertBefore(a, bar.firstChild);
+    }
+  }
+  if (!SSO || !ssoUser) return;
+  if (ssoRole === 'viewer') {
+    /* viewer = ดูอย่างเดียว — server ปฏิเสธการเขียนทุกอย่างอยู่แล้ว ป้ายนี้กันงงว่าทำไมแก้ไม่ติด */
+    const d = document.createElement('div');
+    d.style.cssText = 'position:sticky; top:0; z-index:9998; background:var(--amber-light); color:#6e4a12;'
+      + ' border:1px solid var(--amber); border-radius:12px; padding:10px 16px; margin:0 auto 14px; max-width:900px';
+    d.textContent = '👁 สิทธิ์ Viewer — ดูอย่างเดียว การแก้ไขบนหน้าจอจะไม่ถูกบันทึกขึ้นเซิร์ฟเวอร์';
+    const wrap = document.querySelector('.wrap');
+    (wrap || document.body).insertBefore(d, (wrap || document.body).firstChild);
+  }
+  if (!roleAtLeast('full')) $('btnDeleteCompany').style.display = 'none';   // ลบบริษัท = full (server บังคับซ้ำอีกชั้น)
+  setInterval(ssoLockTick, 5000);          // จับเวลาในเครื่องเท่านั้น — ไม่มี traffic (มติ r6)
+}
+async function houseBoot() {
+  if (!(await ssoInit())) return;
+  try {
+    const remote = await apiReq('GET', '/api/data');
+    applyingRemote = true;
+    db = {
+      companies: Array.isArray(remote.companies) ? remote.companies : [], activeId: null,
+      employees: Array.isArray(remote.employees) ? remote.employees : [],
+      tombs: (remote.tombs && typeof remote.tombs === 'object') ? remote.tombs : {}, delPushed: {}
+    };
+    loadDB();                        // normalization เดิม (safeStore ว่างในโหมดนี้ db คงเดิม) + บริษัทแรก + ซ่อม activeId
+    primeCompanyStamps();
+    db.companies.forEach(c => { pushedJson[c.id] = JSON.stringify(c); });
+    pushedJson['_tombs'] = JSON.stringify(db.tombs || {});
+    deletedIdList().forEach(id => { db.delPushed[id] = 1; });     // ที่ลบแล้วบน server ไม่ต้องสั่งลบซ้ำ
+    applyingRemote = false;
+  } catch (e) {
+    applyingRemote = false;
+    ssoFatal('โหลดข้อมูลจากเซิร์ฟเวอร์ไม่สำเร็จ — ' + (e.message || e), false);
+    return;
+  }
+  renderCompanySelect();
+  loadCompanyToForm();
+  renderEmployeeList();
+  renderCloudUI();
+  ssoDecorate();
+  renderWizard();
+}
+
 /* ---------- init ---------- */
-loadDB();
-primeCompanyStamps();   // จำเนื้อหาปัจจุบันไว้เป็นฐาน — saveDB จะประทับเวลาเฉพาะบริษัทที่เปลี่ยนจริงหลังจากนี้
-renderCompanySelect();
-loadCompanyToForm();
-renderEmployeeList();
-cloudInit();
-renderWizard();
+if (REMOTE) {
+  houseBoot();
+} else {
+  loadDB();
+  primeCompanyStamps();   // จำเนื้อหาปัจจุบันไว้เป็นฐาน — saveDB จะประทับเวลาเฉพาะบริษัทที่เปลี่ยนจริงหลังจากนี้
+  renderCompanySelect();
+  loadCompanyToForm();
+  renderEmployeeList();
+  cloudInit();
+  renderWizard();
+}
 </script>
 </body>
 </html>

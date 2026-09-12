@@ -1,0 +1,27 @@
+# Deploy บน Render.com — กด "New +" > "Blueprint" แล้วชี้มาที่ repo นี้ (ไฟล์นี้ต้องอยู่ root ของ repo)
+# ฐานข้อมูลแนะนำ Neon (Postgres ฟรีถาวร — DB ฟรีของ Render หมดอายุ 30 วัน):
+# ตั้ง DATABASE_URL เป็น connection string ใน Dashboard → Environment
+services:
+  - type: web
+    name: bbt-pnd51
+    runtime: python
+    rootDir: webapp
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true          # deploy อัตโนมัติทุกครั้งที่ push ขึ้น branch main
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL     # Postgres (เช่น Neon) — ไม่ตั้ง = SQLite ในเครื่อง (หายเมื่อ redeploy บน Render free)
+        sync: false
+      # เปิดใช้รหัสเข้าใช้งาน (ชั่วคราว — ปิดทันทีเมื่อ SSO ขึ้นจริง ตามกติกา C9 ห้ามคงคู่กัน)
+      - key: ACCESS_CODE
+        sync: false
+      # SSO บ้านกลาง (ก้อน C) — ตั้งใน Dashboard เมื่อได้กุญแจจาก admin บ้านกลาง (รับต่อหน้าเท่านั้น ห้ามแชต/LINE)
+      - key: SSO_ENABLED      # "1" = เปิด SSO (แล้ว ACCESS_CODE จะถูกปิดอัตโนมัติ)
+        sync: false
+      - key: BBT_URL          # URL บ้านกลาง (Preview/Production คนละค่า)
+        sync: false
+      - key: HOUSE_KEY        # กุญแจเข้าบ้าน (entry) — dev/production คนละดอก
+        sync: false

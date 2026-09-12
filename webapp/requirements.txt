@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+SQLAlchemy>=2.0
+httpx>=0.27          # เรียกบ้านกลาง (SSO exchange/check)
+# ใช้เฉพาะเมื่อเก็บข้อมูลบน PostgreSQL (คลาวด์) — ไม่จำเป็นถ้าใช้ SQLite
+psycopg2-binary>=2.9

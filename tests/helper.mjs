@@ -27,7 +27,7 @@ function findChromium() {
 
 export const APP_FILE = 'file://' + path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'index.html');
 
-export async function openApp() {
+export async function openApp(opts = {}) {
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
   const page = await (await browser.newContext()).newPage();
@@ -36,10 +36,16 @@ export async function openApp() {
   page.on('console', m => {
     if (m.type() !== 'error') return;
     const t = m.text();
-    if (!/net::ERR|Failed to load resource|gstatic|firebase/i.test(t)) errors.push('CONSOLE: ' + t);
+    if (!/net::ERR|Failed to load resource|gstatic|firebase|the server responded with a status/i.test(t)) errors.push('CONSOLE: ' + t);
   });
-  await page.route('**/*', r => r.request().url().startsWith('file://') ? r.continue() : r.abort());
-  await page.goto(APP_FILE, { waitUntil: 'load' });
+  const allow = opts.allowHosts || [];   // เช่น ['localhost'] สำหรับเทสโหมดบ้าน — นอกนั้นตัดเน็ตทั้งหมด
+  await page.route('**/*', r => {
+    const u = r.request().url();
+    if (u.startsWith('file://')) return r.continue();
+    try { if (allow.includes(new URL(u).hostname)) return r.continue(); } catch (e) {}
+    return r.abort();
+  });
+  await page.goto(opts.url || APP_FILE, { waitUntil: 'load' });
   await page.waitForTimeout(300);
   return { browser, page, errors };
 }
