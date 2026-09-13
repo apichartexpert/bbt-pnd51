@@ -480,6 +480,22 @@
   </div>
 
   <!-- ===== รายการงาน — สถานะทุกบริษัท ===== -->
+  <div class="card screen-only" id="folderCard">
+    <h2><span class="step">📂</span> นำเข้าจากโฟลเดอร์งาน ภ.ง.ด.51 ทั้งชุด</h2>
+    <p class="note" style="margin-top:0">เลือกโฟลเดอร์ <b>PND51 2026</b> (มีโฟลเดอร์ย่อยรายบริษัท) — โปรแกรมจะหาไฟล์ Estimate ล่าสุด, แบบที่ยื่นแล้ว (TAX_FORM_P51…), ใบเสร็จ (RECEIPT_P51…) และ Estimate ฉบับ PDF ของแต่ละบริษัท แล้วเติมข้อมูลคำนวณ + เอกสารแนบ + สถานะยื่นแบบ/ชำระเงินให้
+      · เลือกโฟลเดอร์ <b>PND51 2026 Submission</b> เพิ่มได้ (ไฟล์ "…_PND.51 R.pdf" = แบบที่ยื่นแล้ว จับคู่ด้วยรหัสงาน/ชื่อบริษัท/เลขภาษี)
+      · <b>ไฟล์บน OneDrive ต้องดาวน์โหลดลงเครื่องก่อน</b> (คลิกขวาโฟลเดอร์ → Always Keep on This Device) · เอกสารแนบเก็บในเครื่องนี้ ไม่ซิงค์ขึ้นระบบกลาง (ตัวเลข/สถานะซิงค์ตามปกติ)</p>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="field"><label>โฟลเดอร์ PND51 2026 (รายบริษัท)</label><input type="file" id="folderMain" webkitdirectory multiple></div>
+      <div class="field"><label>โฟลเดอร์ PND51 2026 Submission (ไม่บังคับ)</label><input type="file" id="folderSub" webkitdirectory multiple></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-outline btn-sm" id="btnFolderScan" type="button">🔍 สแกนโฟลเดอร์ (ยังไม่นำเข้า)</button>
+      <button class="btn-primary btn-sm" id="btnFolderImport" type="button" style="display:none">⭱ นำเข้าทั้งหมดตามตาราง</button>
+      <span class="hint" id="folderProgress"></span>
+    </div>
+    <div id="folderPlan" style="overflow-x:auto; margin-top:10px"></div>
+  </div>
   <div class="card screen-only" id="jobsCard">
     <h2><span class="step">📋</span> รายการงาน — สถานะทุกบริษัท</h2>
     <div id="jobsList"></div>
@@ -591,6 +607,12 @@
     </div>
     <div class="alert warn" id="smeCheckAlert" style="display:none"></div>
     <div id="rateCheckBox"></div>
+    <div class="sub-head">สิทธิประโยชน์ BOI</div>
+    <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+      <input type="checkbox" id="coBoi" style="margin-top:4px">
+      <span><b>กิจการได้รับส่งเสริมการลงทุน (BOI)</b><br>
+      <span class="hint">เปิดแล้วขั้นตอนที่ 3 จะมีช่องแยกกำไรส่วนที่ได้รับยกเว้นภาษี 100% และส่วนที่ได้รับลดหย่อน 50% — คิดภาษีเฉพาะส่วนที่ต้องเสีย (ผังเดียวกับไฟล์ Estimate ของกลุ่ม Constant/BC: Total / BOI / Non-BOI)</span></span>
+    </label>
   </div>
 
   <!-- ===== นำเข้างบทดลอง & เปรียบเทียบ ===== -->
@@ -719,6 +741,20 @@
       </div>
     </div>
 
+    <div id="boiBox" style="display:none">
+      <div class="sub-head">แยกกำไรตามสิทธิ BOI <span class="hint" style="font-weight:400">— ส่วนของ "กำไรสุทธิทางภาษีก่อนหักขาดทุนสะสม" ทั้งปี (หลังบวกกลับ/หักรายได้ยกเว้น) · ที่เหลือ = ส่วนที่ไม่ได้รับส่งเสริม (Non-BOI)</span></div>
+      <div class="grid">
+        <div class="field">
+          <label>กำไรส่วนที่ได้รับยกเว้นภาษี 100% (BOI) (บาท) <span class="hint">— ไม่นำมาคิดภาษี · ติดลบได้ถ้ากิจการ BOI ขาดทุน</span></label>
+          <input type="text" class="num" id="inBoi100" placeholder="0.00">
+        </div>
+        <div class="field">
+          <label>กำไรส่วนที่ได้รับลดหย่อน 50% (BOI) (บาท) <span class="hint">— เสียภาษีครึ่งอัตรา</span></label>
+          <input type="text" class="num" id="inBoi50" placeholder="0.00">
+        </div>
+      </div>
+      <p class="note" id="boiHint" style="margin-top:6px"></p>
+    </div>
     <div class="sub-head">ขาดทุนสะสมยกมา (ยกไปได้ไม่เกิน 5 รอบบัญชี)</div>
     <div style="overflow-x:auto"><table class="loss" id="lossTable"></table></div>
     <div class="grid" style="margin-top:12px">
@@ -921,7 +957,7 @@ function saveDB() {
 function newCompany() {
   return { id: 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
            name: '', taxId: '', year: new Date().getFullYear() + 543,
-           jobCode: '', yearEnd: '', capital: 0, preparer: '', reviewer: '', approver: '',
+           jobCode: '', yearEnd: '', capital: 0, boiMode: false, preparer: '', reviewer: '', approver: '',
            lossCarry: [0, 0, 0, 0, 0],
            priorYearTax: { addBack: 0, exempt: 0, lossUsed: 0, cit: 0, wht: 0, payable: 0 },
            entityType: 'sme', history: [],
@@ -960,6 +996,8 @@ function loadCompanyToForm() {
   $('coYear').value = c.year;
   $('coJobCode').value = c.jobCode || '';
   $('coCapital').value = c.capital ? fmt(c.capital) : '';
+  $('coBoi').checked = !!c.boiMode;
+  syncBoiUI();
   $('coYearEnd').value = c.yearEnd || '';
   $('metaEst').textContent = c.estimateImport
     ? `✓ นำเข้าจาก ${c.estimateImport.file} เมื่อ ${fmtDateTime(c.estimateImport.at)} — ภาษีครึ่งปีตามไฟล์ ${fmt(c.estimateImport.tax)} บาท · ${payText(c.estimateImport.netPay)}`
@@ -984,6 +1022,8 @@ function loadCompanyToForm() {
   $('inLastYearProfit').value = est.lastYearProfit || '';
   $('inWht').value = est.wht || '';
   $('inLossUsed').value = est.lossUsed || '';
+  $('inBoi100').value = est.boi100 || '';
+  $('inBoi50').value = est.boi50 || '';
   parsedA = (c.tb && c.tb.A) || null;
   parsedB = (c.tb && c.tb.B) || null;
   parsedC = (c.tb && c.tb.C) || null;
@@ -1010,6 +1050,7 @@ function saveCompanyFromForm() {
   c.year = parseInt($('coYear').value) || c.year;
   c.jobCode = $('coJobCode').value.trim();
   c.capital = parseNum($('coCapital').value);
+  c.boiMode = $('coBoi').checked;
   c.yearEnd = $('coYearEnd').value.trim();
   c.preparer = $('coPreparer').value.trim();
   c.reviewer = $('coReviewer').value.trim();
@@ -1024,7 +1065,8 @@ function saveCompanyFromForm() {
   c.est = {
     revenue: $('inRevenue').value, expense: $('inExpense').value, profit: $('inProfit').value,
     addBack: $('inAddBack').value, exempt: $('inExempt').value, lastYearProfit: $('inLastYearProfit').value,
-    wht: $('inWht').value, lossUsed: $('inLossUsed').value
+    wht: $('inWht').value, lossUsed: $('inLossUsed').value,
+    boi100: $('inBoi100').value, boi50: $('inBoi50').value
   };
   saveDB();
   renderCompanySelect();
@@ -1226,6 +1268,7 @@ function companiesToWorkbook(companies, employees) {
       'รอบปี พ.ศ.': c.year || '',
       'Job Code': c.jobCode || '',
       'ทุนจดทะเบียน': c.capital || '',
+      'BOI': c.boiMode ? 'ใช่' : '',
       'วันสิ้นรอบบัญชี': c.yearEnd || '',
       'ประเภท/อัตราภาษี': c.entityType === 'general' ? 'บริษัททั่วไป 20%' : 'SME ขั้นบันได',
       'ผู้จัดทำ': c.preparer || '',
@@ -1400,7 +1443,9 @@ const ATT_KINDS = [
   { key: 'fs',    label: 'งบการเงินปีก่อน', hint: '' },
   { key: 'pnd50', label: 'ภ.ง.ด.50 ปีก่อน', hint: '' },
   { key: 'wht',   label: 'รายละเอียดภาษีเงินได้ถูกหัก ณ ที่จ่าย', hint: '' },
-  { key: 'filing',  label: 'ใบตอบรับการยื่นแบบ ภ.ง.ด.51', hint: 'บันทึกให้อัตโนมัติเมื่อบันทึกยื่นแบบในขั้นตอนที่ 7' },
+  { key: 'estpdf', label: 'Estimate PND.51 ฉบับพิมพ์ (PDF ที่ส่งตรวจ/อนุมัติ)', hint: 'นำเข้าจากโฟลเดอร์งานได้ (ไฟล์ XXX_2026_Estimate PND.51*.pdf)' },
+  { key: 'form',   label: 'แบบ ภ.ง.ด.51 ที่ยื่นแล้ว (e-Filing: TAX_FORM_P51…)', hint: 'นำเข้าจากโฟลเดอร์งานได้' },
+  { key: 'filing',  label: 'ใบตอบรับการยื่นแบบ ภ.ง.ด.51', hint: 'บันทึกให้อัตโนมัติเมื่อบันทึกยื่นแบบในขั้นตอนที่ 7 · หรือไฟล์ "…_PND.51 R.pdf" จากโฟลเดอร์ Submission' },
   { key: 'receipt', label: 'ใบเสร็จรับเงินค่าภาษี', hint: 'บันทึกให้อัตโนมัติเมื่อบันทึกชำระเงินในขั้นตอนที่ 7' }
 ];
 let attDB = null, attCache = [], attPendingKind = '';
@@ -1556,6 +1601,7 @@ const WF_STATUS = {
   completed: { label: 'เสร็จสมบูรณ์ (ยื่น+ชำระครบ)', cls: 'wf-approved' }
 };
 const WF_ACTION = {
+  'import-folder': { label: 'นำเข้าจากโฟลเดอร์งาน', role: 'ระบบ', ico: 'sub', icon: '📂' },
   submit:          { label: 'ส่งให้ตรวจสอบ', role: 'ผู้จัดทำ', ico: 'sub', icon: '📤' },
   'review-pass':   { label: 'ผ่านการตรวจสอบ', role: 'ผู้ตรวจสอบ', ico: 'ok', icon: '✔' },
   'send-approve':  { label: 'ส่งให้ผู้อนุมัติ', role: 'ผู้ตรวจสอบ', ico: 'sub', icon: '📨' },
@@ -1796,17 +1842,26 @@ function calculate() {
   // · พิมพ์จำนวนเอง = แสดงและหักตามที่พิมพ์เสมอ ไม่ว่าปีนี้กำไรหรือขาดทุน (ผู้ใช้ยืนยัน 2026-07-17)
   //   — จำกัดแค่ไม่เกินยอดในตาราง 5 รอบ (ถ้ากรอกตารางไว้) · ฐานภาษีติดลบ = ภาษี 0 อยู่แล้ว ไม่มีผลเสีย
   // · เว้นว่าง = หักให้อัตโนมัติเท่าที่เกิดประโยชน์ (ไม่เกินกำไรที่เป็นบวก — ไม่เผาสิทธิ์ทิ้งในปีขาดทุน)
+  // D16 (2026-09-13 ผู้ใช้ตัดสิน): ขาดทุนสะสมที่ "ใช้" ไม่เกินกำไรทางภาษีที่มี ไม่ว่าจะพิมพ์เองหรือหักอัตโนมัติ
+  // (ต่างจากไฟล์ Excel ที่หักเต็มจำนวน) · พิมพ์เอง = ใช้ตามที่พิมพ์แต่ไม่เกินยอดตาราง (ถ้ากรอกตาราง) และไม่เกินกำไร · 0 = ไม่ใช้
   const lossFieldBlank = $('inLossUsed').value.trim() === '';
   const lossTableCap = (lossFieldBlank || availableLoss > 0) ? availableLoss : Infinity;
+  const lossProfitCap = Math.max(taxableBeforeLoss, 0);
+  const lossTyped = lossFieldBlank ? 0 : Math.max(0, parseNum($('inLossUsed').value));
   const lossUsed = lossFieldBlank
-    ? Math.max(0, Math.min(availableLoss, Math.max(taxableBeforeLoss, 0)))
-    : Math.max(0, Math.min(parseNum($('inLossUsed').value), lossTableCap));
+    ? Math.max(0, Math.min(availableLoss, lossProfitCap))
+    : Math.max(0, Math.min(lossTyped, lossTableCap, lossProfitCap));
   const lossAuto = lossFieldBlank && lossUsed > 0;
+  const lossCapped = !lossFieldBlank && lossTyped > lossUsed + 0.005;   // พิมพ์มาเกินกำไร/ยอดตาราง → ถูกจำกัด
   const taxableProfit = taxableBeforeLoss - lossUsed;
 
   const half = Math.max(taxableProfit, 0) / 2;
-  let tax = 0, brackets = null;
-  if (c.entityType === 'sme') {
+  let tax = 0, brackets = null, boi = null;
+  if (c.boiMode) {
+    // โหมด BOI: แยกกำไรส่วนยกเว้น 100% / ลดหย่อน 50% / ไม่ได้รับส่งเสริม แล้วคิดภาษีเฉพาะส่วนที่ต้องเสีย
+    boi = boiSplit(taxableBeforeLoss, lossUsed, parseNum($('inBoi100').value), parseNum($('inBoi50').value), c.entityType);
+    tax = boi.tax; brackets = boi.brackets;
+  } else if (c.entityType === 'sme') {
     const r = smeTax(half);
     tax = r.tax; brackets = r.brackets;
   } else {
@@ -1827,7 +1882,7 @@ function calculate() {
 
   lastResult = {
     company: { ...c }, revenue, expense, profit, addBack, exempt,
-    taxableBeforeLoss, availableLoss, lossUsed, lossAuto, taxableProfit,
+    taxableBeforeLoss, availableLoss, lossUsed, lossAuto, lossTyped, lossCapped, taxableProfit, boi,
     lastYear: lastYearFromPY ? PY.taxable : lastYear,
     lastYearBlank: lastYearBlank && !lastYearFromPY,
     lastYearSrc: lastYearFromPY ? 'กำไรสุทธิเพื่อเสียภาษีปีก่อน (งบ A + ข้อมูล ภ.ง.ด.50 ขั้นตอนที่ 2)' : '',
@@ -1856,10 +1911,29 @@ function renderResult() {
       `${fmt(r.profit)} + ${fmt(r.addBack)} − ${fmt(r.exempt)}`,
       fmt(r.taxableBeforeLoss));
   }
-  if (r.lossUsed) rows += tr3('หัก ขาดทุนสะสมยกมาที่นำมาใช้', r.lossAuto ? 'หักให้อัตโนมัติจากตารางขาดทุนสะสม (ไม่เกินกำไรที่เป็นบวก)' : '', '(' + fmt(r.lossUsed) + ')', 'sub');
+  if (r.lossUsed || r.lossCapped) rows += tr3('หัก ขาดทุนสะสมยกมาที่นำมาใช้',
+    r.lossAuto ? 'หักให้อัตโนมัติจากตารางขาดทุนสะสม (ไม่เกินกำไรที่มี)' : (r.lossCapped ? `พิมพ์ไว้ ${fmt(r.lossTyped)} — ใช้ได้ไม่เกินกำไรทางภาษี/ยอดตาราง` : ''),
+    '(' + fmt(r.lossUsed) + ')', 'sub');
   rows += tr3('<b>กำไร(ขาดทุน)สุทธิเพื่อเสียภาษี (ทั้งปี)</b>',
     r.lossUsed ? `${fmt(r.taxableBeforeLoss)} − ${fmt(r.lossUsed)}` : '',
     fmt(r.taxableProfit));
+  const B = r.boi;
+  if (B) {
+    rows += `<tr><td colspan="3" style="font-weight:600;color:var(--blue-dark)">แยกกำไรตามสิทธิ BOI (หลังหักขาดทุนสะสม — หักจากส่วนที่ไม่ได้รับส่งเสริมก่อน)</td></tr>`;
+    rows += tr3('ส่วนที่ได้รับยกเว้นภาษี 100% (BOI) — ไม่คิดภาษี', B.boi100In !== B.boi100 ? `กรอก ${fmt(B.boi100In)}` : '', fmt(B.boi100), 'sub');
+    rows += tr3('ส่วนที่ได้รับลดหย่อน 50% (BOI)', B.boi50In !== B.boi50 ? `กรอก ${fmt(B.boi50In)}` : '', fmt(B.boi50), 'sub');
+    rows += tr3('ส่วนที่ไม่ได้รับส่งเสริม (Non-BOI)', `${fmt(r.taxableProfit)} − ${fmt(B.boi100)} − ${fmt(B.boi50)}`, fmt(B.nonBoi), 'sub');
+    rows += tr3('ฐานภาษีครึ่งปี (กึ่งหนึ่งของส่วน Non-BOI + ส่วนลดหย่อน 50%)', `(${fmt(B.nonBoi)} + ${fmt(B.boi50)}) ÷ 2`, fmt(B.base));
+    if (r.entityType === 'sme') {
+      rows += `<tr><td colspan="3" style="font-weight:600;color:var(--blue-dark)">ภาษีคำนวณตามอัตรา SME (ขั้นบันได จากฐานภาษี ${fmt(B.base)})</td></tr>`;
+      r.brackets.forEach(b => { rows += tr3(b.label, b.rate ? `${fmt(b.amount)} × ${b.rate}%` : `${fmt(b.amount)} × 0% (ยกเว้น)`, fmt(b.tax), 'sub'); });
+      rows += tr3('ภาษีก่อนหักลดหย่อน BOI', 'รวมภาษีทุกขั้น', fmt(B.taxBase), 'sub');
+    } else {
+      rows += tr3('ภาษีคำนวณ อัตรา 20% (ก่อนหักลดหย่อน BOI)', `${fmt(B.base)} × 20%`, fmt(B.taxBase), 'sub');
+    }
+    if (B.reduction) rows += tr3('หัก ภาษีส่วนที่ได้รับลดหย่อน 50% (BOI)', `ภาษีของส่วนลดหย่อน ${fmt(B.boi50Half)} × 50%`, '(' + fmt(B.reduction) + ')', 'sub');
+    rows += tr3('<b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b>', '', fmt(r.tax));
+  } else {
   rows += tr3('กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)',
     `${fmt(Math.max(r.taxableProfit, 0))} ÷ 2`,
     fmt(r.half));
@@ -1874,6 +1948,7 @@ function renderResult() {
   } else {
     rows += tr3('ภาษีคำนวณ อัตรา 20%', `${fmt(r.half)} × 20%`, fmt(r.tax));
     rows += tr3('<b>รวมภาษีเงินได้นิติบุคคลครึ่งปี</b>', '', fmt(r.tax));
+  }
   }
   rows += tr3('หัก ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก', '', '(' + fmt(r.wht) + ')');
   const payable = Math.max(r.netPay, 0);
@@ -1989,8 +2064,8 @@ function renderLossTable() {
 function updateLossHint() {
   const avail = lossAvailable();
   $('lossUsedHint').textContent = avail > 0
-    ? `มียอดใช้ได้ ${fmt(avail)} บาท — เว้นว่างไว้ ระบบจะหักให้อัตโนมัติเมื่อมีกำไร · พิมพ์จำนวนเอง = หักตามนั้นเสมอ (แม้ปีขาดทุน) · ไม่ใช้ให้พิมพ์ 0`
-    : 'กรอกตารางด้านบนแล้วระบบหักให้อัตโนมัติเมื่อมีกำไร — หรือพิมพ์จำนวนที่ใช้เองในช่องนี้ (หักตามที่พิมพ์เสมอ แม้ปีขาดทุน)';
+    ? `มียอดใช้ได้ ${fmt(avail)} บาท — เว้นว่างไว้ ระบบจะหักให้อัตโนมัติ · พิมพ์จำนวนเอง = ใช้ตามนั้นแต่ไม่เกินยอดตารางและไม่เกินกำไรที่มี · ไม่ใช้ให้พิมพ์ 0`
+    : 'กรอกตารางด้านบนแล้วระบบหักให้อัตโนมัติเมื่อมีกำไร — หรือพิมพ์จำนวนที่ใช้เองในช่องนี้ (ใช้ได้ไม่เกินกำไรทางภาษีที่มี)';
 }
 
 /* ---------- สรุปแบบ ภ.ง.ด.51 (front page) ---------- */
@@ -2009,7 +2084,14 @@ function pndSummaryHtml(r) {
   if (r.addBack || r.exempt) body += row('กำไรสุทธิทางภาษีก่อนหักขาดทุนสะสม', r.taxableBeforeLoss, 'sub2');
   if (r.lossUsed) body += rowNeg('หัก ขาดทุนสะสมยกมาที่นำมาใช้', r.lossUsed);
   body += row('กำไร(ขาดทุน)สุทธิเพื่อเสียภาษี (ทั้งปี)', r.taxableProfit, 'sub2');
-  body += row('กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)', r.half);
+  if (r.boi) {
+    body += rowNeg('หัก ส่วนที่ได้รับยกเว้นภาษี 100% (BOI)', r.boi.boi100);
+    body += row('ฐานภาษีครึ่งปี (กึ่งหนึ่งของส่วน Non-BOI + ส่วนลดหย่อน 50%)', r.boi.base);
+    body += row('ภาษีคำนวณก่อนหักลดหย่อน BOI', r.boi.taxBase, 'sub2');
+    if (r.boi.reduction) body += rowNeg('หัก ภาษีส่วนที่ได้รับลดหย่อน 50% (BOI)', r.boi.reduction);
+  } else {
+    body += row('กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)', r.half);
+  }
   body += row('ภาษีเงินได้นิติบุคคลครึ่งปี', r.tax, 'sub2');
   body += rowNeg('หัก ภาษีถูกหัก ณ ที่จ่าย ครึ่งปีแรก', r.wht);
   body += `<tr class="grand"><td>ภาษีที่ต้องชำระตามแบบ ภ.ง.ด.51</td><td class="amt">${fmt(payable)}</td></tr>`;
@@ -2048,7 +2130,7 @@ function renderPndSummary(r) {
 
 $('btnCalc').addEventListener('click', () => { calculate(); if (lastResult) goToStep(4); });
 $('btnClear').addEventListener('click', () => {
-  ['inRevenue', 'inExpense', 'inProfit', 'inAddBack', 'inExempt', 'inLastYearProfit', 'inWht', 'inLossUsed']
+  ['inRevenue', 'inExpense', 'inProfit', 'inAddBack', 'inExempt', 'inLastYearProfit', 'inWht', 'inLossUsed', 'inBoi100', 'inBoi50']
     .forEach(id => $(id).value = '');
   setResultVisible(false);
   lastResult = null;
@@ -2086,7 +2168,8 @@ $('btnSave').addEventListener('click', () => {
     // ค่าตั้งต้นทั้งหมด สำหรับเรียกกลับมาแก้ไข
     revenue: r.revenue, expense: r.expense, profit: r.profit,
     addBack: r.addBack, exempt: r.exempt, lastYear: r.lastYear,
-    wht: r.wht, lossUsed: r.lossUsed
+    wht: r.wht, lossUsed: r.lossUsed,
+    boi100: r.boi ? r.boi.boi100In : 0, boi50: r.boi ? r.boi.boi50In : 0
   });
   saveDB();
   renderHistory();
@@ -2135,6 +2218,7 @@ window.loadHistory = function (i) {
   put('inRevenue', h.revenue); put('inExpense', h.expense); put('inProfit', h.profit);
   put('inAddBack', h.addBack); put('inExempt', h.exempt);
   put('inLastYearProfit', h.lastYear); put('inWht', h.wht); put('inLossUsed', h.lossUsed);
+  put('inBoi100', h.boi100 || 0); put('inBoi50', h.boi50 || 0);
   const et = h.entityType || 'sme';
   const radio = document.querySelector(`input[name="entityType"][value="${et}"]`);
   if (radio) { radio.checked = true; syncRadioStyle(); saveCompanyFromForm(); }
@@ -2295,8 +2379,9 @@ function buildPrintReport() {
       bracketRows += `<tr><td style="padding-left:24px">${b.label} — ฐาน ${fmt(b.amount)}</td><td class="amt">${fmt(b.tax)}</td></tr>`;
     });
   } else {
-    bracketRows = `<tr><td style="padding-left:24px">อัตรา 20% ของฐานภาษี</td><td class="amt">${fmt(r.tax)}</td></tr>`;
+    bracketRows = `<tr><td style="padding-left:24px">อัตรา 20% ของฐานภาษี</td><td class="amt">${fmt(r.boi ? r.boi.taxBase : r.tax)}</td></tr>`;
   }
+  if (r.boi && r.boi.reduction) bracketRows += `<tr><td style="padding-left:24px">หัก ภาษีส่วนที่ได้รับลดหย่อน 50% (BOI)</td><td class="amt">(${fmt(r.boi.reduction)})</td></tr>`;
   const payable = Math.max(r.netPay, 0);
   const wfP = ensureWorkflow(activeCompany());
   const wfSt = WF_STATUS[wfP.status] || WF_STATUS.draft;
@@ -2336,7 +2421,13 @@ function buildPrintReport() {
   if (r.addBack || r.exempt) adj.push(`<tr><td><b>กำไรสุทธิทางภาษีก่อนหักขาดทุนสะสม</b></td><td class="amt">${fmt(r.taxableBeforeLoss)}</td></tr>`);
   if (r.lossUsed) adj.push(`<tr><td style="padding-left:20px">หัก ขาดทุนสะสมยกมาที่นำมาใช้</td><td class="amt">(${fmt(r.lossUsed)})</td></tr>`);
   adj.push(`<tr><td><b>กำไร(ขาดทุน)สุทธิเพื่อเสียภาษี (ทั้งปี)</b></td><td class="amt">${fmt(r.taxableProfit)}</td></tr>`);
-  adj.push(`<tr><td>กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)</td><td class="amt">${fmt(r.half)}</td></tr>`);
+  if (r.boi) {
+    adj.push(`<tr><td style="padding-left:20px">หัก ส่วนที่ได้รับยกเว้นภาษี 100% (BOI)</td><td class="amt">(${fmt(r.boi.boi100)})</td></tr>`);
+    adj.push(`<tr><td style="padding-left:20px">ส่วนลดหย่อน 50% (BOI) ${fmt(r.boi.boi50)} · ส่วนไม่ได้รับส่งเสริม ${fmt(r.boi.nonBoi)}</td><td class="amt"></td></tr>`);
+    adj.push(`<tr><td>ฐานภาษีครึ่งปี (กึ่งหนึ่งของส่วนที่ต้องเสียภาษี)</td><td class="amt">${fmt(r.boi.base)}</td></tr>`);
+  } else {
+    adj.push(`<tr><td>กึ่งหนึ่งของกำไรสุทธิ (ฐานภาษีครึ่งปี)</td><td class="amt">${fmt(r.half)}</td></tr>`);
+  }
 
   $('printReport').innerHTML = `
     <h1>สรุปประมาณการภาษีเงินได้นิติบุคคลครึ่งปี (ภ.ง.ด.51)</h1>
@@ -2793,10 +2884,12 @@ function computeCurrentPreview() {
   const lossCap = (lossBlank || availLoss > 0) ? availLoss : Infinity;
   const lossUsed = lossBlank
     ? Math.max(0, Math.min(availLoss, Math.max(taxableBeforeLoss, 0)))
-    : Math.max(0, Math.min(parseNum($('inLossUsed').value), lossCap));
+    : Math.max(0, Math.min(parseNum($('inLossUsed').value), lossCap, Math.max(taxableBeforeLoss, 0)));   // D16: ไม่เกินกำไร
   const taxable = taxableBeforeLoss - lossUsed;
   const half = Math.max(taxable, 0) / 2;
-  const tax = estimateTaxOn(half, c.entityType);
+  const tax = c.boiMode
+    ? boiSplit(taxableBeforeLoss, lossUsed, parseNum($('inBoi100').value), parseNum($('inBoi50').value), c.entityType).tax
+    : estimateTaxOn(half, c.entityType);
   return { profit, addBack, exempt, lossUsed, taxable, half, tax, wht, payable: tax - wht,
            hasData: manual || !!est, src };
 }
@@ -2899,6 +2992,280 @@ $('btnToggleDetail').addEventListener('click', () => {
   const d = $('detailWrap');
   d.style.display = d.style.display === 'none' ? 'block' : 'none';
 });
+
+/* ---------- โหมด BOI (2026-09-13) — ผังตามไฟล์ Estimate ของกลุ่ม Constant/BC: Total / BOI 100% / BOI 50% / Non-BOI ----------
+   กติกา [รอผู้ใช้ยืนยัน]: กำไรทางภาษีก่อนหักขาดทุน แบ่งเป็น ส่วนยกเว้น 100% (ไม่คิดภาษี) · ส่วนลดหย่อน 50% (ภาษีครึ่งอัตรา) · ส่วน Non-BOI (เต็มอัตรา)
+   ขาดทุนสะสมที่ใช้ หักจาก Non-BOI ก่อน → ลดหย่อน 50% → ยกเว้น 100% · ส่วนยกเว้นที่ติดลบ (กิจการ BOI ขาดทุน) ไม่นำมาหักกลบกับส่วนอื่น (ตามไฟล์ SFCE10)
+   ภาษี = ภาษีของ (Non-BOI + ส่วน 50%) ÷ 2 − 50% × ภาษีส่วนเพิ่มของส่วน 50% (ตามไฟล์ MRS: CIT บนยอดรวม − ภาษีในส่วนที่ได้รับการลด) */
+function boiSplit(taxableBeforeLoss, lossUsed, boi100In, boi50In, type) {
+  const total = taxableBeforeLoss;
+  let boi100 = boi100In, boi50 = Math.max(boi50In, 0);
+  const posTotal = Math.max(total, 0);
+  // ส่วน BOI ที่กรอก (เฉพาะที่เป็นบวก) ไม่เกินกำไรทั้งปี — เกินให้ตัดส่วน 50% ก่อน แล้วค่อยส่วนยกเว้น
+  if (Math.max(boi100, 0) + boi50 > posTotal) {
+    boi50 = Math.max(0, Math.min(boi50, posTotal - Math.max(boi100, 0)));
+    if (Math.max(boi100, 0) > posTotal) boi100 = posTotal;
+  }
+  let nonBoi = total - boi100 - boi50;
+  // หักขาดทุนสะสม: Non-BOI ก่อน → 50% → ยกเว้น
+  let L = lossUsed;
+  const takeNon = Math.min(Math.max(nonBoi, 0), L); nonBoi -= takeNon; L -= takeNon;
+  const take50 = Math.min(boi50, L); boi50 -= take50; L -= take50;
+  const take100 = Math.min(Math.max(boi100, 0), L); boi100 -= take100; L -= take100;
+  const taxableParts = Math.max(nonBoi, 0) + boi50 - Math.max(-nonBoi, 0);   // Non-BOI ติดลบหักกลบกับส่วน 50% ได้ (ยอดรวมของส่วนที่ต้องเสีย)
+  const base = Math.max(nonBoi + boi50, 0) / 2;
+  const boi50Half = Math.max(Math.min(boi50, nonBoi + boi50), 0) / 2;
+  const tb = type === 'sme' ? smeTax(base) : { tax: base * 0.20, brackets: null };
+  const taxBase = tb.tax;
+  const taxWithout50 = estimateTaxOn(Math.max(base - boi50Half, 0), type);
+  const reduction = Math.max(taxBase - taxWithout50, 0) * 0.5;
+  return { boi100In, boi50In, boi100, boi50, nonBoi, base, boi50Half, taxBase, reduction, tax: taxBase - reduction, brackets: tb.brackets, lossFromNon: takeNon, lossFrom50: take50, lossFrom100: take100 };
+}
+function syncBoiUI() {
+  const on = $('coBoi').checked;
+  $('boiBox').style.display = on ? '' : 'none';
+  if (!on) return;
+  const tbl = parseNum($('inProfit').value) + parseNum($('inAddBack').value) - parseNum($('inExempt').value);
+  const b100 = parseNum($('inBoi100').value), b50 = parseNum($('inBoi50').value);
+  $('boiHint').textContent = $('inProfit').value.trim() === ''
+    ? 'กรอกประมาณการกำไรด้านบนก่อน แล้วแยกส่วน BOI — ที่เหลือจะเป็นส่วน Non-BOI อัตโนมัติ'
+    : `กำไรทางภาษีก่อนหักขาดทุน ${fmt(tbl)} = ยกเว้น 100% ${fmt(b100)} + ลดหย่อน 50% ${fmt(b50)} + Non-BOI ${fmt(tbl - b100 - b50)}`;
+}
+$('coBoi').addEventListener('change', () => { saveCompanyFromForm(); syncBoiUI(); renderPriorYearTax(); });
+['inBoi100', 'inBoi50', 'inProfit', 'inAddBack', 'inExempt'].forEach(id => $(id).addEventListener('change', () => { syncBoiUI(); }));
+['inBoi100', 'inBoi50'].forEach(id => $(id).addEventListener('change', () => { saveCompanyFromForm(); renderPriorYearTax(); }));
+
+// อ่านชีต "Estimate PND.51" ผัง BOI (Total / BOI / BOI 50% / Non-BOI / Round) → โครงสร้างเดียวกับ parseEstimateWorkbook + ส่วน BOI
+function parseEstimateBoi(aoa, cell) {
+  const n = v => { if (v === null || v === undefined || v === '') return 0; const x = parseFloat(String(v).replace(/,/g, '')); return isFinite(x) ? x : 0; };
+  const txt = v => (typeof v === 'string' ? v.trim() : '');
+  let h1 = 0, cP = 0, cX = 0, cE = 0;
+  for (let r = 8; r <= 14 && !h1; r++) for (let c = 2; c <= 40; c++) {
+    const t = txt(cell(r, c));
+    if (/^(YE|Year)\s*\d{4}/i.test(t)) { h1 = r; cP = c; }
+    else if (/^actual/i.test(t) && h1) cX = c;
+    else if (/^estimat/i.test(t) && h1) cE = c;
+  }
+  if (!(h1 && cP && cX && cE)) throw new Error('ผัง BOI: ไม่พบหัวคอลัมน์ YE / Actual / Estimate');
+  const h2 = h1 + 1;
+  const lab = c => txt(cell(h2, c)).toUpperCase().replace(/\s+/g, '');
+  let cTot = cE, cB100 = 0, cB50 = 0, cNon = 0, cRound = 0;
+  for (let c = cE; c <= 40; c++) {
+    const l = lab(c); if (!l) continue;
+    if (l.includes('ROUND')) cRound = c;
+    else if (l === 'TOTAL') cTot = c;
+    else if (l === 'BOI' || l.includes('100')) cB100 = c;
+    else if (l.includes('50')) cB50 = c;
+    else if (l.startsWith('NON')) cNon = c;
+  }
+  const rowOf = (re, from) => { for (let r = from || h2 + 1; r <= 60; r++) if (re.test(txt(cell(r, 1)))) return r; return 0; };
+  const rInc = rowOf(/^Income/i), rOther = rowOf(/^Other income/i), rCost = rowOf(/^Cost/i), rInt = rowOf(/^Interest/i), rProfit = rowOf(/^Profit$/i);
+  const rAddBack = rowOf(/^Add back/i), rAddRev = rowOf(/^Revenue$/i, rAddBack), rAddExp = rowOf(/^Expense$/i, rAddBack);
+  const rTaxable = rAddExp + 1, rLoss = rowOf(/ขาดทุนสะสม/, rAddExp), rAfterLoss = rLoss + 1;
+  let rHalf = 0, rTax = 0, rRed = 0, rWT = 0, rPnd = 0, rNet = 0;
+  for (let r = rAfterLoss; r <= rAfterLoss + 10; r++) {
+    for (let c = 1; c <= 40; c++) { const t = txt(cell(r, c)); if (/^Half/i.test(t) && !rHalf) rHalf = r; if (/^(Tax|CIT)$/i.test(t) && !rTax) rTax = r; }
+    const a = txt(cell(r, 1));
+    if (/ภาษีในส่วนที่ได้รับ/.test(a)) rRed = r;
+    if (/^W\/T/i.test(a)) rWT = r;
+    if (/^PND/i.test(a)) rPnd = r;
+    if (/^Net Paid/i.test(a)) rNet = r;
+  }
+  if (!(rProfit && rAddExp && rLoss && rTax)) throw new Error('ผัง BOI: หาแถว Profit / Add back / ขาดทุนสะสม / Tax ไม่ครบ');
+  const v = (r, c) => (r && c) ? n(cell(r, c)) : 0;
+  const period = c => {
+    const revenue = v(rInc, c) + v(rOther, c), cost = v(rCost, c), interest = v(rInt, c), net = v(rProfit, c);
+    return { revenue, cost, interest, sga: revenue - cost - interest - net, net, addRev: v(rAddRev, c), addExp: v(rAddExp, c), taxable: v(rTaxable, c) };
+  };
+  const pick = (r, c1, c2) => { const a = v(r, c1); return (a || !c2) ? a : v(r, c2); };   // คอลัมน์ Round ก่อน ถ้าว่างใช้ Total
+  const cR = cRound || cTot;
+  const company = txt(cell(1, 1));
+  // แถว 1-3: Job Code / Period / Prepared By อยู่คอลัมน์ท้าย ๆ (ก่อนป้าย "กรณี...")
+  let jobCode = '', yearEndRaw = null, preparer = '';
+  for (let c = 2; c <= 40; c++) {
+    const t1 = cell(1, c); if (typeof t1 === 'string' && t1.trim() && !/^กรณี/.test(t1.trim())) jobCode = t1.trim();
+    const t2 = cell(2, c); if ((typeof t2 === 'number' || t2 instanceof Date) && !yearEndRaw) yearEndRaw = t2;
+    const t3 = txt(cell(3, c)); if (t3 && !/By/i.test(t3) && !/^กรณี/.test(t3)) preparer = t3;
+  }
+  const yearEnd = thaiYearEndText(yearEndRaw);
+  const fyBE = parseInt((/(\d{4})\s*$/.exec(yearEnd) || [])[1]) || 0;
+  const rateText = txt(cell(9, 2)), capital = n(cell(7, 2));
+  const entityType = /ทั่วไป|20/.test(rateText) ? 'general' : (/ขั้นบันได|SME/i.test(rateText) ? 'sme' : '');
+  const prior = period(cP), actual = period(cX), est = period(cTot), round = cRound ? period(cRound) : est;
+  const tax = pick(rTax, cR, cTot), red = pick(rRed, cR, cTot), wht = pick(rWT, cR, cTot);
+  const netPayRaw = pick(rNet, cR, cTot);
+  return {
+    company, taxId: excelTaxIdText(cell(4, 2)), capital, rateText, entityType, yearEnd, fyBE, jobCode, preparer, reviewer: '', approver: '',
+    boiLayout: true, boi100: v(rTaxable, cB100), boi50: v(rTaxable, cB50), nonBoi: v(rTaxable, cNon),
+    prior: { net: prior.net, addBack: prior.addExp, exempt: -prior.addRev, lossUsed: -v(rLoss, cP), cit: v(rTax, cP) + v(rRed, cP), wht: -v(rWT, cP), pnd51: -v(rPnd, cP), payable: v(rNet, cP) },
+    round, cur: { lossUsed: -pick(rLoss, cR, cTot), taxableAfterLoss: pick(rAfterLoss, cR, cTot), half: pick(rHalf, cR, cTot), tax: tax + red, wht: -wht, netPay: netPayRaw || (tax + red - wht), safeText: '' },
+    lossCarry: [0, 0, 0, 0, 0],
+    tbA: null, tbB: null, tbC: null, _periods: { prior, actual, est }
+  };
+}
+
+/* ---------- นำเข้าจากโฟลเดอร์งานทั้งชุด (2026-09-13) ----------
+   โครงสร้างโฟลเดอร์สำนักงาน: PND51 2026/<CODE>_<ชื่อบริษัท>/ (หรือ PND51 2026/00.Group X/<CODE>_<ชื่อ>/) มีไฟล์
+   XXX_2026_Estimate PND.51*.xlsx (คำนวณ) · XXX_2026_Estimate PND.51*.pdf (ฉบับพิมพ์) · TAX_FORM_P51…pdf (แบบที่ยื่น e-Filing) · RECEIPT_P51…pdf (ใบเสร็จ)
+   โฟลเดอร์ PND51 2026 Submission/ มีไฟล์ <CODE>_<ชื่อ>_PND.51 R.pdf (แบบที่ยื่นแล้ว) */
+let folderPlan = [];
+const fnIsEstXlsx = n => /estimate\s*pnd\.?\s*51/i.test(n) && /\.xlsx?$/i.test(n) && !/^~\$|^Copy of|Compare/i.test(n);
+const fnIsEstPdf = n => /estimate\s*pnd\.?\s*51/i.test(n) && /\.pdf$/i.test(n);
+const fnIsForm51 = n => /^(TAX_FORM_P51|PND51_P51)/i.test(n) && /\.pdf$/i.test(n);
+const fnIsReceipt51 = n => /^RECEIPT_P51/i.test(n) && /\.pdf$/i.test(n);
+const fnIsFiledR = n => /\.pdf$/i.test(n) && !/estimate/i.test(n) && (/PND\.?\s*51\s*_?\s*R\b/i.test(n) || /_R\.pdf/i.test(n) || /_PND\.?51\.pdf$/i.test(n));
+const fnHasYear2026 = f => /2026|2569/.test(f.name) || new Date(f.lastModified).getFullYear() >= 2026;
+const latestOf = arr => arr.slice().sort((a, b) => b.lastModified - a.lastModified)[0] || null;
+function folderCodeOf(name) { return String(name || '').split(/_(?=บริษัท|ห้าง|กิจการ|บจ|หจก)/)[0].replace(/_+$/, '').trim(); }
+function findCompanyByTax(taxId, year) {
+  const t = String(taxId || '').replace(/\D/g, '');
+  if (t.length !== 13) return null;
+  return db.companies.find(x => String(x.taxId || '').replace(/\D/g, '') === t && String(x.year || '') === String(year || '')) || null;
+}
+async function attSaveFor(companyId, file, kind, note) {
+  if (file.size > 15 * 1024 * 1024) return null;
+  const existing = await attListFor(companyId);
+  if (existing.some(a => a.kind === kind && a.name === file.name && a.size === file.size)) return null;   // มีไฟล์เดิมแล้ว ไม่ซ้ำ
+  const rec = { id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6), companyId, kind, note: note || '',
+    name: file.name, type: file.type || '', size: file.size, addedAt: new Date().toISOString(), blob: file };
+  await attTx(st => st.put(rec));
+  return rec;
+}
+function folderGroups(files) {
+  const groups = new Map();
+  for (const f of files) {
+    const segs = (f.webkitRelativePath || '').split('/');
+    if (segs.length < 3) continue;                       // root/company/file
+    let idx = 2, key = segs[1];
+    if (/^00/.test(segs[1])) { if (segs.length < 4) continue; key = segs[1] + '/' + segs[2]; idx = 3; }
+    const folder = segs[idx - 1];
+    if (/^\d+\./.test(folder) || /^\d{4}$/.test(folder)) continue;   // 1.PBC / 1.Constant Draft / 2025 = ไม่ใช่โฟลเดอร์บริษัท
+    if (segs.length > idx + 1) continue;                  // ไฟล์ในโฟลเดอร์ย่อยลึกกว่านั้น (เช่น /2025/) ไม่ใช้
+    if (!groups.has(key)) groups.set(key, { key, folder, code: folderCodeOf(folder), files: [] });
+    groups.get(key).files.push(f);
+  }
+  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key, 'th'));
+}
+async function folderScan(mainOverride, subOverride) {
+  const main = mainOverride || [...($('folderMain').files || [])], subs = (subOverride || [...($('folderSub').files || [])]).filter(f => /\.pdf$/i.test(f.name));
+  if (!main.length) { toast('เลือกโฟลเดอร์ PND51 2026 ก่อน'); return; }
+  const groups = folderGroups(main);
+  $('btnFolderImport').style.display = 'none';
+  folderPlan = [];
+  let i = 0;
+  for (const g of groups) {
+    i++;
+    $('folderProgress').textContent = `กำลังอ่าน ${i}/${groups.length}: ${g.folder}`;
+    await new Promise(r => setTimeout(r, 0));
+    const p = { key: g.key, folder: g.folder, code: g.code, E: null, err: '', est: null, form: null, receipt: null, estPdf: null, rfile: null, subFile: null, existing: null, wfStatus: null };
+    p.est = latestOf(g.files.filter(f => fnIsEstXlsx(f.name) && /2026/.test(f.name)));
+    p.form = latestOf(g.files.filter(f => fnIsForm51(f.name) && fnHasYear2026(f)));
+    p.receipt = latestOf(g.files.filter(f => fnIsReceipt51(f.name) && fnHasYear2026(f)));
+    p.estPdf = latestOf(g.files.filter(f => fnIsEstPdf(f.name) && /2026/.test(f.name)));
+    p.rfile = latestOf(g.files.filter(f => fnIsFiledR(f.name) && fnHasYear2026(f)));
+    if (!p.est) { p.err = 'ไม่พบไฟล์ XXX_2026_Estimate PND.51.xlsx'; folderPlan.push(p); continue; }
+    try {
+      const wb = XLSX.read(await p.est.arrayBuffer(), { type: 'array' });
+      p.E = parseEstimateWorkbook(wb);
+    } catch (e) { p.err = 'อ่านไฟล์ Estimate ไม่ได้: ' + (e.message || e); folderPlan.push(p); continue; }
+    folderPlan.push(p);
+  }
+  // จับคู่ไฟล์จากโฟลเดอร์ Submission: เลขภาษี 13 หลัก → ชื่อบริษัท → รหัสงาน
+  for (const f of subs) {
+    const m = /\d{13}/.exec(f.name);
+    const code = folderCodeOf(f.name);
+    const nameKey = companySearchKey(f.name.replace(/^[^_]*_+/, '').replace(/_?PND\.?51.*$/i, '').replace(/_R\.pdf$/i, ''));
+    let hit = null;
+    if (m) hit = folderPlan.find(p => p.E && String(p.E.taxId) === m[0]);
+    if (!hit && nameKey) hit = folderPlan.find(p => p.E && companySearchKey(p.E.company) === nameKey) || folderPlan.find(p => companySearchKey(p.folder.replace(/^[^_]*_+/, '')) === nameKey);
+    if (!hit && code) hit = folderPlan.find(p => p.code === code) || folderPlan.find(p => p.code.endsWith('_' + code) || code.endsWith('_' + p.code));
+    if (hit && (!hit.subFile || f.lastModified > hit.subFile.lastModified)) hit.subFile = f;
+  }
+  for (const p of folderPlan) {
+    if (!p.E) continue;
+    p.existing = findCompanyByTax(p.E.taxId, p.E.fyBE);
+    const filed = !!(p.form || p.rfile || p.subFile);
+    p.wfStatus = filed ? ((p.receipt || p.E.cur.netPay <= 0) ? 'completed' : 'filed') : null;
+  }
+  $('folderProgress').textContent = `สแกนเสร็จ: ${folderPlan.length} โฟลเดอร์ · อ่าน Estimate ได้ ${folderPlan.filter(p => p.E).length} · จับคู่ไฟล์ Submission ได้ ${folderPlan.filter(p => p.subFile).length}`;
+  renderFolderPlan();
+  if (folderPlan.some(p => p.E)) $('btnFolderImport').style.display = '';
+}
+function renderFolderPlan() {
+  const y = v => v ? '✓' : '–';
+  const rows = folderPlan.map(p => {
+    const E = p.E;
+    const st = p.wfStatus ? WF_STATUS[p.wfStatus].label : (E ? 'ร่าง (ยังไม่พบแบบที่ยื่น)' : '');
+    return `<tr>
+      <td>${escapeHtml(p.folder)}</td>
+      <td>${E ? `<b>${escapeHtml(E.company || '-')}</b><br><span class="hint">${escapeHtml(E.taxId || '')} · ${E.boiLayout ? 'ผัง BOI · ' : ''}${escapeHtml(E.rateText || '')}</span>` : `<span style="color:var(--red)">${escapeHtml(p.err)}</span>`}</td>
+      <td class="amt">${E ? fmt(E.cur.tax) : ''}</td>
+      <td class="amt">${E ? fmt(Math.max(E.cur.netPay, 0)) : ''}</td>
+      <td style="text-align:center">${y(p.form || p.rfile || p.subFile)}</td>
+      <td style="text-align:center">${y(p.receipt)}</td>
+      <td style="text-align:center">${y(p.estPdf)}</td>
+      <td>${escapeHtml(st)}</td>
+      <td>${E ? (p.existing ? 'อัปเดตรายการเดิม' : 'เพิ่มบริษัทใหม่') : '-'}</td>
+    </tr>`;
+  }).join('');
+  $('folderPlan').innerHTML = folderPlan.length
+    ? `<table class="pl"><thead><tr><th>โฟลเดอร์</th><th>บริษัท (จากไฟล์ Estimate)</th><th class="amt">ภาษีครึ่งปี</th><th class="amt">ชำระ</th><th>แบบที่ยื่น</th><th>ใบเสร็จ</th><th>Est. PDF</th><th>สถานะที่จะตั้ง</th><th>ในระบบ</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '';
+}
+async function folderImport() {
+  const rows = folderPlan.filter(p => p.E);
+  if (!rows.length) return;
+  if (!confirm(`นำเข้า ${rows.length} บริษัท (เพิ่มใหม่ ${rows.filter(p => !p.existing).length} · อัปเดต ${rows.filter(p => p.existing).length}) ทับข้อมูลคำนวณเดิมของบริษัทที่มีอยู่แล้ว?\nสถานะงานจะถูกตั้งเป็น "ยื่นแบบแล้ว/เสร็จสมบูรณ์" ตามเอกสารที่พบ (รายการที่เสร็จสมบูรณ์อยู่แล้วจะไม่ถูกลดสถานะ)`)) return;
+  $('btnFolderImport').disabled = true;
+  let i = 0, added = 0, updated = 0, files = 0;
+  for (const p of rows) {
+    i++;
+    $('folderProgress').textContent = `กำลังนำเข้า ${i}/${rows.length}: ${p.E.company || p.folder}`;
+    await new Promise(r => setTimeout(r, 0));
+    let c = findCompanyByTax(p.E.taxId, p.E.fyBE);
+    if (c) updated++;
+    else {
+      // ใช้รายการว่าง (ยังไม่ตั้งชื่อ ไม่มีประวัติ) ที่โปรแกรมสร้างไว้ตอนเปิดครั้งแรกก่อน ไม่ให้เหลือรายการเปล่าค้าง
+      c = db.companies.find(x => !(x.name || '').trim() && !(x.history || []).length && !(x.tb && (x.tb.A || x.tb.B || x.tb.C)));
+      if (!c) { c = newCompany(); db.companies.push(c); }
+      added++;
+    }
+    if (db.deletedIds.includes(c.id)) db.deletedIds = db.deletedIds.filter(x => x !== c.id);
+    applyEstimateToCompany(c, p.E, p.est.name);
+    if (!c.jobCode) c.jobCode = p.code;
+    const saves = [];
+    if (p.est) saves.push([p.est, 'tb', 'Estimate PND.51 (Excel สำนักงาน)']);
+    if (p.estPdf) saves.push([p.estPdf, 'estpdf', 'จากโฟลเดอร์งาน']);
+    if (p.form) saves.push([p.form, 'form', 'e-Filing']);
+    if (p.rfile) saves.push([p.rfile, 'filing', 'จากโฟลเดอร์งาน']);
+    if (p.subFile) saves.push([p.subFile, 'filing', 'จากโฟลเดอร์ Submission']);
+    if (p.receipt) saves.push([p.receipt, 'receipt', 'e-Filing']);
+    for (const [f, kind, note] of saves) { try { if (await attSaveFor(c.id, f, kind, note)) files++; } catch (e) { console.warn('attach failed', f.name, e); } }
+    const wf = ensureWorkflow(c);
+    const at = new Date().toISOString();
+    const dOf = f => new Date(f.lastModified).toISOString().slice(0, 10);
+    wf.snapshot = { netPay: p.E.cur.netPay, tax: p.E.cur.tax, taxableProfit: p.E.cur.taxableAfterLoss, half: p.E.cur.half,
+                    revenue: p.E.round.revenue, expense: p.E.round.revenue - p.E.round.net, year: c.year, entityType: c.entityType, at, source: 'folder-import' };
+    if (p.wfStatus && wf.status !== 'completed') {
+      const ff = p.form || p.rfile || p.subFile;
+      wf.filing = wf.filing || { date: dOf(ff), by: 'นำเข้าจากโฟลเดอร์', at, fileName: ff.name };
+      if (p.receipt) wf.payment = wf.payment || { date: dOf(p.receipt), by: 'นำเข้าจากโฟลเดอร์', at, fileName: p.receipt.name };
+      wf.status = p.wfStatus; wf.returned = false;
+      wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `นำเข้าย้อนหลังจากโฟลเดอร์ ${p.folder} → ${WF_STATUS[p.wfStatus].label} (วันที่ยื่น/ชำระอ้างอิงจากวันที่ไฟล์)` });
+    } else if (!p.wfStatus) {
+      wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `นำเข้าข้อมูลคำนวณจากโฟลเดอร์ ${p.folder} (ยังไม่พบแบบที่ยื่น)` });
+    }
+    db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+    saveDB();
+  }
+  db.activeId = rows[rows.length - 1] && findCompanyByTax(rows[rows.length - 1].E.taxId, rows[rows.length - 1].E.fyBE) ? findCompanyByTax(rows[rows.length - 1].E.taxId, rows[rows.length - 1].E.fyBE).id : db.activeId;
+  renderCompanySelect(); renderEmployeeList(); loadCompanyToForm(); renderDashSummary(); renderJobsDashboard();
+  $('btnFolderImport').disabled = false;
+  $('folderProgress').textContent = `นำเข้าเสร็จ: เพิ่ม ${added} · อัปเดต ${updated} · แนบไฟล์ใหม่ ${files} ไฟล์`;
+  toast(`นำเข้าจากโฟลเดอร์เสร็จ: เพิ่ม ${added} บริษัท อัปเดต ${updated} บริษัท แนบไฟล์ ${files} ไฟล์`);
+}
+$('btnFolderScan').addEventListener('click', () => folderScan().catch(e => toast('สแกนไม่สำเร็จ: ' + (e.message || e))));
+$('btnFolderImport').addEventListener('click', () => folderImport().catch(e => { toast('นำเข้าไม่สำเร็จ: ' + (e.message || e)); $('btnFolderImport').disabled = false; }));
 
 /* ---------- ตรวจเกณฑ์อัตราภาษี: ทุนชำระแล้ว ≤ 5 ล้าน และ รายได้ ≤ 30 ล้าน (สูตรเดียวกับช่องตรวจ D7 ในไฟล์ Estimate PND.51 ของสำนักงาน) ---------- */
 function rateCaseCheck() {
@@ -3017,17 +3384,20 @@ function validationChecks(r) {
   if (r.exempt < 0) push('bad', 'รายได้ยกเว้นต้องไม่ติดลบ', fmt(r.exempt));
   push(Math.abs((r.profit + r.addBack - r.exempt) - r.taxableBeforeLoss) <= 1 ? 'ok' : 'bad',
     'กำไรทางบัญชี + บวกกลับ − รายได้ยกเว้น = กำไรทางภาษีก่อนหักขาดทุน', fmt(r.taxableBeforeLoss));
-  if (r.lossUsed || r.availableLoss) {
-    const overProfit = r.lossUsed > Math.max(r.taxableBeforeLoss, 0) + 1;
-    const overAvail = r.availableLoss > 0 && r.lossUsed > r.availableLoss + 1;
-    push(overAvail ? 'bad' : (overProfit ? 'warn' : 'ok'), 'ขาดทุนสะสมที่ใช้ ไม่เกินยอดยกมา และไม่เกินกำไรที่มี',
-      overAvail ? `ใช้ ${fmt(r.lossUsed)} เกินยอดยกมา ${fmt(r.availableLoss)}` :
-      overProfit ? `ใช้ ${fmt(r.lossUsed)} เกินกำไรก่อนหักขาดทุน ${fmt(Math.max(r.taxableBeforeLoss, 0))} — ภาษีเป็น 0 อยู่แล้ว แต่ยอดที่ใช้จริงควรไม่เกินกำไร (ไฟล์ Excel หักเต็มจำนวนโดยไม่จำกัด)` :
+  if (r.lossUsed || r.availableLoss || r.lossCapped) {
+    push(r.lossCapped ? 'warn' : 'ok', 'ขาดทุนสะสมที่ใช้ ไม่เกินยอดยกมา และไม่เกินกำไรที่มี',
+      r.lossCapped ? `พิมพ์ไว้ ${fmt(r.lossTyped)} แต่ใช้ได้ ${fmt(r.lossUsed)} (จำกัดที่กำไรทางภาษี ${fmt(Math.max(r.taxableBeforeLoss, 0))} / ยอดตาราง ${fmt(r.availableLoss)}) — ส่วนที่เหลือยกไปปีถัดไปได้ (ไฟล์ Excel หักเต็มจำนวน จึงต่างกันตรงบรรทัดนี้)` :
       `ใช้ ${fmt(r.lossUsed)} จากยอดยกมา ${fmt(r.availableLoss)}${r.lossAuto ? ' (หักให้อัตโนมัติ)' : ''}`);
   }
   if (r.brackets) {
     const s = r.brackets.reduce((a, b) => a + b.amount, 0);
-    push(Math.abs(s - r.half) <= 1 ? 'ok' : 'bad', 'ฐานภาษีแต่ละช่วงรวมเท่ากับกึ่งหนึ่งของกำไร', `${fmt(s)} = ${fmt(r.half)}`);
+    const base = r.boi ? r.boi.base : r.half;
+    push(Math.abs(s - base) <= 1 ? 'ok' : 'bad', 'ฐานภาษีแต่ละช่วงรวมเท่ากับฐานภาษีครึ่งปี', `${fmt(s)} = ${fmt(base)}`);
+  }
+  if (r.boi) {
+    const B = r.boi, over = (B.boi100In + B.boi50In) > Math.max(r.taxableBeforeLoss, 0) + 1 && (B.boi100In > 0 || B.boi50In > 0);
+    push(over ? 'warn' : 'ok', 'ส่วน BOI ที่กรอกไม่เกินกำไรทางภาษีทั้งปี',
+      over ? `กรอก BOI ${fmt(B.boi100In)} + ${fmt(B.boi50In)} เกินกำไร ${fmt(Math.max(r.taxableBeforeLoss, 0))} — โปรแกรมจำกัดให้แล้ว` : `ยกเว้น ${fmt(B.boi100)} · ลดหย่อน 50% ${fmt(B.boi50)} · Non-BOI ${fmt(B.nonBoi)}`);
   }
   const py = computePriorYearTax();
   if (!(r.wht > 0) && py.wht > 0 && r.revenue > 0)
@@ -3092,8 +3462,25 @@ function parseEstimateWorkbook(wb) {
   }
   if (!(hdr && cP && cX && cE && cR)) {
     let boi = false;
-    for (let r = 8; r <= 14; r++) for (let c = 1; c <= 30; c++) { const v = cell(r, c); if (typeof v === 'string' && v.toUpperCase().includes('BOI')) boi = true; }
-    if (boi) throw new Error('ไฟล์นี้เป็นผัง BOI (Total / BOI / Non-BOI ของกลุ่ม Constant/BC) ซึ่งโปรแกรมยังไม่รองรับการนำเข้าอัตโนมัติ — กรอกตัวเลขเองในขั้นตอนที่ 3 หรือแจ้งผู้ดูแลให้เพิ่มผังนี้');
+    for (let r = 8; r <= 14; r++) for (let c = 1; c <= 40; c++) { const v = cell(r, c); if (typeof v === 'string' && v.toUpperCase().includes('BOI')) boi = true; }
+    if (boi) {
+      const E = parseEstimateBoi(aoa, cell);
+      const toP = (p, periodText) => {
+        if (!p.revenue && !p.cost && !p.sga && !p.interest && !p.net) return null;
+        const accounts = [
+          { code: '4', name: 'รายได้รวม (จากไฟล์ Estimate ผัง BOI)', group: 'revenue', amount: p.revenue },
+          { code: '51', name: 'ต้นทุน (จากไฟล์ Estimate ผัง BOI)', group: 'cost', amount: p.cost },
+          { code: '52', name: 'ค่าใช้จ่ายขาย/บริหาร และรายการอื่น (จากไฟล์ Estimate ผัง BOI)', group: 'sga', amount: p.sga },
+          { code: '58', name: 'ดอกเบี้ยจ่าย (จากไฟล์ Estimate ผัง BOI)', group: 'interest', amount: p.interest }
+        ].filter(a => a.amount);
+        const totals = { revenue: p.revenue, cost: p.cost, sga: p.sga, interest: p.interest, tax: 0 };
+        const grossMargin = totals.revenue - totals.cost, ebit = grossMargin - totals.sga;
+        return { company: E.company, period: periodText, accounts, totals, grossMargin, ebit, netProfit: ebit - totals.interest, whtTotal: 0, fromEstimate: true };
+      };
+      E.tbA = toP(E._periods.prior, 'ปีก่อน (Total)'); E.tbB = toP(E._periods.actual, 'ครึ่งปีแรก (Total)'); E.tbC = toP(E._periods.est, 'ประมาณการทั้งปี (Total)');
+      delete E._periods;
+      return E;
+    }
     throw new Error('ไม่พบหัวคอลัมน์ YE / Actual Half / Est. Full / Round ในชีต Estimate PND.51 — รูปแบบไฟล์ต่างจากที่โปรแกรมรู้จัก');
   }
   const rowOf = (re, dflt) => { for (let r = 1; r <= 60; r++) { const v = cell(r, 1); if (typeof v === 'string' && re.test(v.trim())) return r; } return dflt; };
@@ -3179,7 +3566,12 @@ function applyEstimateToCompany(c, E, fileName) {
     wht: t(E.cur.wht), lossUsed: E.cur.lossUsed ? fmt(E.cur.lossUsed) : ''
   };
   c.lossCarry = E.lossCarry;
-  c.estimateImport = { file: fileName, at: new Date().toISOString(), tax: E.cur.tax, netPay: E.cur.netPay, half: E.cur.half, rateText: E.rateText };
+  if (E.boiLayout) {
+    c.boiMode = true;
+    c.est.boi100 = E.boi100 ? fmt(E.boi100) : '';
+    c.est.boi50 = E.boi50 ? fmt(E.boi50) : '';
+  }
+  c.estimateImport = { file: fileName, at: new Date().toISOString(), tax: E.cur.tax, netPay: E.cur.netPay, half: E.cur.half, rateText: E.rateText, boi: !!E.boiLayout };
 }
 $('fileEst').addEventListener('change', e => {
   const file = e.target.files[0];
@@ -3200,7 +3592,7 @@ $('fileEst').addEventListener('change', e => {
       attSave(file, 'tb', 'Estimate PND.51 (Excel สำนักงาน)').then(() => refreshAttachments());
       renderCompanySelect(); renderEmployeeList(); loadCompanyToForm();
       $('importError').style.display = 'none';
-      toast(`นำเข้าไฟล์ Estimate ของ ${E.company || c.name} แล้ว — ภาษีครึ่งปีตามไฟล์ ${fmt(E.cur.tax)} บาท · ดูรายการตรวจสอบในขั้นตอนที่ 4`);
+      toast(`นำเข้าไฟล์ Estimate ของ ${E.company || c.name} แล้ว${E.boiLayout ? ' (ผัง BOI — ตารางขาดทุนสะสมของผังนี้ต้องกรอกเอง)' : ''} — ภาษีครึ่งปีตามไฟล์ ${fmt(E.cur.tax)} บาท · ดูรายการตรวจสอบในขั้นตอนที่ 4`);
     } catch (err) {
       $('importError').style.display = 'block';
       $('importError').innerHTML = '<b>นำเข้าไฟล์ Estimate ไม่สำเร็จ</b>' + escapeHtml(err.message || String(err));
@@ -3844,6 +4236,7 @@ function renderWizard() {
   $('cloudCard').style.display = work ? 'none' : '';
   $('dashSummary').style.display = work ? 'none' : '';
   $('jobsCard').style.display = work ? 'none' : '';
+  $('folderCard').style.display = work ? 'none' : '';
   $('wizardProgress').style.display = work ? '' : 'none';
   document.querySelector('.wizard-nav').style.display = work ? '' : 'none';
   WIZARD_STEPS.forEach(n => {
