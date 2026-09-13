@@ -231,6 +231,16 @@
   .alert.danger { background: var(--red-light); border: 1.5px solid var(--red); color: #7c241a; }
   .alert.ok { background: var(--green-light); border: 1.5px solid var(--green); color: #145633; }
   .alert ul { margin: 6px 0 0 20px; }
+  /* รายการตรวจสอบความถูกต้อง (ขั้น 4) */
+  .vcheck ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .vcheck li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: .88rem; }
+  .vcheck li.vc-ok { background: var(--green-light); border-color: #c9efd4; }
+  .vcheck li.vc-warn { background: var(--amber-light); border-color: #ffd9a0; }
+  .vcheck li.vc-bad { background: var(--red-light); border-color: #ffb8b0; }
+  .vcheck .vc-ico { font-weight: 800; width: 18px; flex: none; }
+  .vcheck li.vc-ok .vc-ico { color: var(--green); }
+  .vcheck li.vc-warn .vc-ico { color: var(--amber); }
+  .vcheck li.vc-bad .vc-ico { color: var(--red); }
 
   .note { font-size: .8rem; color: var(--gray); margin-top: 12px; }
 
@@ -521,6 +531,10 @@
         <input type="text" id="coJobCode" placeholder="เช่น CEST-51">
       </div>
       <div class="field">
+        <label>ทุนจดทะเบียนชำระแล้ว (บาท) <span class="hint">— ใช้ตรวจเกณฑ์ SME (ไม่เกิน 5 ล้าน)</span></label>
+        <input type="text" class="num" id="coCapital" placeholder="0.00">
+      </div>
+      <div class="field">
         <label>วันสิ้นรอบบัญชี (Year-end)</label>
         <input type="text" id="coYearEnd" placeholder="31/12/2569">
       </div>
@@ -576,6 +590,7 @@
       </label>
     </div>
     <div class="alert warn" id="smeCheckAlert" style="display:none"></div>
+    <div id="rateCheckBox"></div>
   </div>
 
   <!-- ===== นำเข้างบทดลอง & เปรียบเทียบ ===== -->
@@ -601,6 +616,14 @@
         <label>ประมาณการงวดปัจจุบัน (C) <span class="hint">— ประมาณการทั้งปี</span></label>
         <input type="file" id="fileC" accept=".xlsx,.xls">
         <span class="hint" id="metaC"></span>
+      </div>
+    </div>
+    <div class="sub-head">หรือ นำเข้าจากไฟล์ Estimate PND.51 ของสำนักงาน (Excel) <span class="hint" style="font-weight:400">— อ่านชีต "Estimate PND.51" แล้วเติมข้อมูลบริษัท ทุนจดทะเบียน อัตราภาษี งบ 3 งวด บวกกลับ ขาดทุนสะสม ภาษีปีก่อน และ WHT ให้ครบในคลิกเดียว (ทับข้อมูลของบริษัทที่เลือกอยู่)</span></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="field">
+        <label>ไฟล์ XXX_2026_Estimate PND.51.xlsx</label>
+        <input type="file" id="fileEst" accept=".xlsx,.xls,.xlsm">
+        <span class="hint" id="metaEst"></span>
       </div>
     </div>
     <div id="importError" class="alert danger" style="display:none"></div>
@@ -723,6 +746,7 @@
         <span class="value" id="finalValue"></span>
       </div>
       <div id="riskBox"></div>
+      <div id="checkBox"></div>
       <div id="pndSummary"></div>
       <div class="btn-row">
         <button class="btn-primary" id="btnSave" type="button">💾 บันทึกผลสรุป</button>
@@ -897,7 +921,7 @@ function saveDB() {
 function newCompany() {
   return { id: 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
            name: '', taxId: '', year: new Date().getFullYear() + 543,
-           jobCode: '', yearEnd: '', preparer: '', reviewer: '', approver: '',
+           jobCode: '', yearEnd: '', capital: 0, preparer: '', reviewer: '', approver: '',
            lossCarry: [0, 0, 0, 0, 0],
            priorYearTax: { addBack: 0, exempt: 0, lossUsed: 0, cit: 0, wht: 0, payable: 0 },
            entityType: 'sme', history: [],
@@ -935,7 +959,11 @@ function loadCompanyToForm() {
   $('coTaxId').value = c.taxId;
   $('coYear').value = c.year;
   $('coJobCode').value = c.jobCode || '';
+  $('coCapital').value = c.capital ? fmt(c.capital) : '';
   $('coYearEnd').value = c.yearEnd || '';
+  $('metaEst').textContent = c.estimateImport
+    ? `✓ นำเข้าจาก ${c.estimateImport.file} เมื่อ ${fmtDateTime(c.estimateImport.at)} — ภาษีครึ่งปีตามไฟล์ ${fmt(c.estimateImport.tax)} บาท · ${payText(c.estimateImport.netPay)}`
+    : '';
   populateAssignSelects();
   const etRadio = document.querySelector(`input[name="entityType"][value="${c.entityType}"]`)
     || document.querySelector('input[name="entityType"][value="sme"]');   // ข้อมูลเก่า/นำเข้าไม่มีค่า → SME
@@ -981,6 +1009,7 @@ function saveCompanyFromForm() {
   c.taxId = $('coTaxId').value.trim();
   c.year = parseInt($('coYear').value) || c.year;
   c.jobCode = $('coJobCode').value.trim();
+  c.capital = parseNum($('coCapital').value);
   c.yearEnd = $('coYearEnd').value.trim();
   c.preparer = $('coPreparer').value.trim();
   c.reviewer = $('coReviewer').value.trim();
@@ -1196,6 +1225,7 @@ function companiesToWorkbook(companies, employees) {
       'เลขผู้เสียภาษี': c.taxId || '',
       'รอบปี พ.ศ.': c.year || '',
       'Job Code': c.jobCode || '',
+      'ทุนจดทะเบียน': c.capital || '',
       'วันสิ้นรอบบัญชี': c.yearEnd || '',
       'ประเภท/อัตราภาษี': c.entityType === 'general' ? 'บริษัททั่วไป 20%' : 'SME ขั้นบันได',
       'ผู้จัดทำ': c.preparer || '',
@@ -1324,6 +1354,7 @@ function workbookToData(wb) {
           name: String(r['ชื่อบริษัท']).trim(), taxId: excelTaxIdText(r['เลขผู้เสียภาษี']),
           year: parseInt(r['รอบปี พ.ศ.']) || (new Date().getFullYear() + 543),
           jobCode: String(r['Job Code'] || '').trim(), yearEnd: excelDateText(r['วันสิ้นรอบบัญชี']),
+          capital: parseNum(r['ทุนจดทะเบียน']),
           entityType: String(r['ประเภท/อัตราภาษี'] || '').includes('20') ? 'general' : 'sme',
           preparer: String(r['ผู้จัดทำ'] || '').trim(), reviewer: String(r['ผู้ตรวจสอบ'] || '').trim(),
           approver: String(r['ผู้อนุมัติ'] || '').trim()
@@ -1783,19 +1814,25 @@ function calculate() {
   }
   const netPay = tax - wht;
 
-  // เตือนเกณฑ์ SME
-  const smeAlert = $('smeCheckAlert');
-  if (c.entityType === 'sme' && revenue > 30000000) {
-    smeAlert.style.display = 'block';
-    smeAlert.innerHTML = '<b>⚠ ตรวจสอบเกณฑ์ SME</b>ประมาณการรายได้ทั้งปีเกิน 30 ล้านบาท — หากรายได้จริงเกิน 30 ล้านบาท หรือทุนชำระแล้วเกิน 5 ล้านบาท จะไม่เข้าเกณฑ์อัตรา SME ต้องใช้อัตรา 20%';
-  } else {
-    smeAlert.style.display = 'none';
-  }
+  // เตือนเกณฑ์ SME — ตรวจทั้งทุนจดทะเบียน (≤ 5 ล้าน) และรายได้ (≤ 30 ล้าน) ตามสูตรตรวจในไฟล์ Estimate PND.51 ของสำนักงาน
+  // (แสดงผลที่กล่อง rateCheckBox ท้ายขั้น 1 และในรายการตรวจสอบขั้น 4 — กล่องเตือนเดิมเลิกใช้)
+  $('smeCheckAlert').style.display = 'none';
+  renderRateCheck();
+
+  // ข้อมูลภาษีปีก่อน (ภ.ง.ด.50): ใช้ตรวจ "เหตุอันสมควร" ตาม ป.50/2537 (ภาษีครึ่งปี ≥ กึ่งหนึ่งของภาษีปีก่อน — ช่อง I29 ในไฟล์ Excel)
+  // และเป็นค่าสำรองของช่อง "กำไรสุทธิจริงปีก่อน" เมื่อเว้นว่างไว้ (ใช้กำไรสุทธิเพื่อเสียภาษีปีก่อนจากงบ A + ข้อมูลที่กรอก)
+  const PY = computePriorYearTax();
+  const lastYearFromPY = lastYearBlank && PY.accProfit !== null;
+  const safeHarbour = safeHarbourInfo(tax, PY.cit, half, c.entityType);
 
   lastResult = {
     company: { ...c }, revenue, expense, profit, addBack, exempt,
     taxableBeforeLoss, availableLoss, lossUsed, lossAuto, taxableProfit,
-    lastYear, lastYearBlank, wht, half, tax, brackets, netPay,
+    lastYear: lastYearFromPY ? PY.taxable : lastYear,
+    lastYearBlank: lastYearBlank && !lastYearFromPY,
+    lastYearSrc: lastYearFromPY ? 'กำไรสุทธิเพื่อเสียภาษีปีก่อน (งบ A + ข้อมูล ภ.ง.ด.50 ขั้นตอนที่ 2)' : '',
+    wht, half, tax, brackets, netPay,
+    priorCit: PY.cit, priorCitIsComputed: PY.citIsComputed, safeHarbour,
     entityType: c.entityType, date: new Date().toISOString()
   };
   renderResult();
@@ -1876,18 +1913,18 @@ function renderResult() {
   } else if (r.lastYear > 0) {
     const threshold75 = r.lastYear * 0.75;
     if (r.taxableProfit >= r.lastYear) {
-      riskHtml = `<div class="alert ok"><b>✓ ความเสี่ยงต่ำ</b>
+      riskHtml = `<div class="alert ok"><b>✓ ความเสี่ยงต่ำ (เทียบกำไรปีก่อน)</b>
         กำไรสุทธิเพื่อเสียภาษี (${fmt(r.taxableProfit)}) ไม่ต่ำกว่ากำไรสุทธิจริงปีก่อน (${fmt(r.lastYear)})
-        — เข้าข่าย "เหตุอันสมควร" ตามแนวคำสั่งกรมสรรพากร ป.50/2537 หากยื่นและชำระภาษีไม่น้อยกว่ากึ่งหนึ่งของภาษีปีก่อน</div>`;
+        — หากกำไรจริงปีนี้ใกล้เคียงปีก่อน ประมาณการจะไม่ขาดเกิน 25%</div>`;
     } else if (r.taxableProfit >= threshold75) {
-      riskHtml = `<div class="alert warn"><b>⚠ ควรระวัง</b>
+      riskHtml = `<div class="alert warn"><b>⚠ ควรระวัง (เทียบกำไรปีก่อน)</b>
         กำไรสุทธิเพื่อเสียภาษี (${fmt(r.taxableProfit)}) ต่ำกว่ากำไรจริงปีก่อน (${fmt(r.lastYear)})
         แต่ยังไม่ต่ำกว่า 75% ของปีก่อน (${fmt(threshold75)})
         — หากกำไรจริงปีนี้ใกล้เคียงปีก่อน ประมาณการจะขาดไม่เกิน 25% แต่หากกำไรจริงสูงกว่าปีก่อน อาจขาดเกิน 25% และถูกเงินเพิ่ม 20% ของภาษีที่ชำระขาด (มาตรา 67 ตรี)</div>`;
     } else {
       const assumedTax = estimateTaxOn(r.lastYear / 2, r.entityType);
       const shortfall = Math.max(assumedTax - r.tax, 0);
-      riskHtml = `<div class="alert danger"><b>⛔ ความเสี่ยงสูง — ประมาณการอาจขาดเกิน 25%</b>
+      riskHtml = `<div class="alert danger"><b>⛔ ความเสี่ยงสูง (เทียบกำไรปีก่อน) — ประมาณการอาจขาดเกิน 25%</b>
         กำไรสุทธิเพื่อเสียภาษี (${fmt(r.taxableProfit)}) ต่ำกว่า 75% ของกำไรจริงปีก่อน (${fmt(threshold75)})
         — หากกำไรจริงปีนี้เท่ากับปีก่อน ประมาณการจะขาดเกิน 25% โดยไม่มีเหตุอันสมควร
         ต้องเสียเงินเพิ่ม 20% ของภาษีที่ชำระขาด (มาตรา 67 ตรี)
@@ -1899,7 +1936,9 @@ function renderResult() {
         แนะนำทบทวนประมาณการ หรือเตรียมเหตุผล/เอกสารสนับสนุน "เหตุอันสมควร"</div>`;
     }
   }
-  riskBox.innerHTML = riskHtml;
+  if (r.lastYearSrc) riskHtml += `<p class="note" style="margin-top:6px">* กำไรจริงปีก่อนที่ใช้เทียบ 75% = ${fmt(r.lastYear)} บาท ดึงจาก${r.lastYearSrc} เพราะช่อง "กำไรสุทธิจริงปีก่อน" เว้นว่างไว้</p>`;
+  riskBox.innerHTML = safeHarbourHtml(r) + riskHtml;
+  $('checkBox').innerHTML = validationHtml(r);
   renderPndSummary(r);
 
   setResultVisible(true);
@@ -2277,6 +2316,12 @@ function buildPrintReport() {
   }
 
   let riskPrint = '';
+  const sh = r.safeHarbour;
+  if (sh && sh.status === 'risk') {
+    riskPrint += `<div class="warn-print"><b>ระวังขาดเกิน 25%:</b> ภาษีครึ่งปีตามประมาณการ ${fmt(r.tax)} บาท ต่ำกว่ากึ่งหนึ่งของภาษีทั้งปีของปีก่อน (${fmt(sh.halfPrior)} บาท) ขาด ${fmt(sh.gap)} บาท — ไม่เข้าเกณฑ์เหตุอันสมควรตาม ป.50/2537</div>`;
+  } else if (sh && sh.status === 'ok') {
+    riskPrint += `<div class="warn-print"><b>มีเหตุอันสมควร (ป.50/2537):</b> ภาษีครึ่งปีตามประมาณการ ${fmt(r.tax)} บาท ไม่น้อยกว่ากึ่งหนึ่งของภาษีทั้งปีของปีก่อน (${fmt(sh.halfPrior)} บาท)</div>`;
+  }
   if (r.lastYear > 0 && r.taxableProfit < r.lastYear * 0.75) {
     riskPrint = `<div class="warn-print"><b>ข้อสังเกต:</b> กำไรสุทธิเพื่อเสียภาษีต่ำกว่า 75% ของกำไรสุทธิจริงปีก่อน (${fmt(r.lastYear)} บาท)
       อาจเข้าข่ายประมาณการขาดเกิน 25% ตามมาตรา 67 ตรี (เงินเพิ่ม 20% ของภาษีที่ชำระขาด) หากไม่มีเหตุอันสมควร</div>`;
@@ -2705,6 +2750,7 @@ function renderCompare() {
   $('btnUseEst').textContent = `↑ ใช้ประมาณการทั้งปี (${estSrc} ปัดพัน) เป็นประมาณการกำไร`;
   renderDetail();
   renderPriorYearTax();
+  renderRateCheck();
 }
 
 // คำนวณภาษีปีก่อน (ภ.ง.ด.50 — เต็มปี) จากงบทดลอง A + ข้อมูลที่กรอก
@@ -2852,6 +2898,317 @@ $('btnUseA').addEventListener('click', () => {
 $('btnToggleDetail').addEventListener('click', () => {
   const d = $('detailWrap');
   d.style.display = d.style.display === 'none' ? 'block' : 'none';
+});
+
+/* ---------- ตรวจเกณฑ์อัตราภาษี: ทุนชำระแล้ว ≤ 5 ล้าน และ รายได้ ≤ 30 ล้าน (สูตรเดียวกับช่องตรวจ D7 ในไฟล์ Estimate PND.51 ของสำนักงาน) ---------- */
+function rateCaseCheck() {
+  const c = activeCompany();
+  if (!c) return null;
+  const capital = parseNum($('coCapital').value);
+  let revenue = parseNum($('inRevenue').value);
+  let revSrc = 'ประมาณการรายได้ทั้งปี (ขั้นตอนที่ 3)';
+  if ($('inRevenue').value.trim() === '') {
+    const est = estimatePeriod();
+    if (est) { revenue = roundedLines(est).revenue; revSrc = 'รายได้จากงบที่นำเข้า ปัดพัน (ขั้นตอนที่ 2)'; }
+    else revSrc = '';
+  }
+  const checked = document.querySelector('input[name="entityType"]:checked');
+  const actual = (checked && checked.value) || c.entityType || 'sme';
+  const overCap = capital > 5000000, overRev = revenue > 30000000;
+  const expected = (overCap || overRev) ? 'general' : 'sme';
+  const known = capital > 0 || revSrc !== '';
+  return { capital, revenue, revSrc, actual, expected, ok: actual === expected, overCap, overRev, known };
+}
+function renderRateCheck() {
+  const box = $('rateCheckBox');
+  if (!box) return;
+  const k = rateCaseCheck();
+  if (!k) { box.innerHTML = ''; return; }
+  const label = t => t === 'general' ? 'บริษัททั่วไป (20%)' : 'SME (อัตราขั้นบันได)';
+  if (!k.known) {
+    box.innerHTML = `<div class="alert warn" style="margin-top:10px"><b>ยังตรวจเกณฑ์อัตราภาษีให้ไม่ได้</b>กรอก "ทุนจดทะเบียนชำระแล้ว" ด้านบน และ/หรือ ประมาณการรายได้ทั้งปี (ขั้นตอนที่ 3 หรือนำเข้างบทดลอง) แล้วโปรแกรมจะตรวจให้อัตโนมัติว่าควรใช้อัตรา SME หรือ 20%</div>`;
+    return;
+  }
+  const capTxt = k.capital ? fmt(k.capital) + ' บาท' : '— (ยังไม่กรอก)';
+  const revTxt = k.revSrc ? `${fmt(k.revenue)} บาท <span class="hint">(${k.revSrc})</span>` : '— (ยังไม่มีข้อมูลรายได้)';
+  const why = (k.overCap && k.overRev) ? 'ทุนเกิน 5 ล้าน และรายได้เกิน 30 ล้าน'
+            : k.overCap ? 'ทุนจดทะเบียนชำระแล้วเกิน 5 ล้านบาท'
+            : k.overRev ? 'รายได้ทั้งปีเกิน 30 ล้านบาท'
+            : 'ทุนไม่เกิน 5 ล้าน และรายได้ไม่เกิน 30 ล้าน';
+  box.innerHTML = k.ok
+    ? `<div class="alert ok" style="margin-top:10px"><b>✓ อัตราภาษีถูกต้องตามเกณฑ์</b>ทุนจดทะเบียน ${capTxt} · รายได้ ${revTxt}<br>${why} → ${label(k.expected)}</div>`
+    : `<div class="alert danger" style="margin-top:10px"><b>⚠ อัตราภาษีไม่ตรงเกณฑ์ — ตรวจสอบก่อนคำนวณ</b>ทุนจดทะเบียน ${capTxt} · รายได้ ${revTxt}<br>${why} → ควรเลือก <b>${label(k.expected)}</b> แต่เลือกไว้เป็น ${label(k.actual)}</div>`;
+}
+$('coCapital').addEventListener('change', () => { saveCompanyFromForm(); renderRateCheck(); renderProgressBar(); });
+document.querySelectorAll('input[name="entityType"]').forEach(r => r.addEventListener('change', renderRateCheck));
+$('inRevenue').addEventListener('change', renderRateCheck);
+
+/* ---------- เหตุอันสมควร ตามคำสั่งกรมสรรพากร ป.50/2537 ----------
+   ยื่นและชำระภาษีครึ่งปี (ก่อนหัก WHT) ไม่น้อยกว่ากึ่งหนึ่งของภาษีทั้งปีของปีก่อน = มีเหตุอันสมควร แม้ประมาณการจะขาดเกิน 25%
+   สูตรเดียวกับช่อง "มีเหตุอันควร / ระวังขาดเกิน 25%" (I29) ในไฟล์ Estimate PND.51 — แต่ใช้ ≥ (ไม่ใช่ >) และไม่เตือนเมื่อปีก่อนไม่มีภาษี */
+function halfProfitForTax(target, type) {
+  if (target <= 0) return 0;
+  if (type !== 'sme') return target / 0.20;
+  return target <= 405000 ? 300000 + target / 0.15 : 3000000 + (target - 405000) / 0.20;
+}
+function safeHarbourInfo(tax, priorCit, half, type) {
+  if (!(priorCit > 0)) return { status: 'na', priorCit: priorCit || 0, halfPrior: 0, gap: 0, extraProfit: 0 };
+  const halfPrior = priorCit / 2;
+  const ok = tax + 0.005 >= halfPrior;
+  const gap = ok ? 0 : halfPrior - tax;
+  const extraProfit = ok ? 0 : Math.max(0, (halfProfitForTax(halfPrior, type) - half) * 2);
+  return { status: ok ? 'ok' : 'risk', priorCit, halfPrior, gap, extraProfit };
+}
+function safeHarbourHtml(r) {
+  const s = r.safeHarbour;
+  if (!s) return '';
+  if (s.status === 'na') {
+    return `<div class="alert warn"><b>ℹ ปีก่อนไม่มีภาษีเงินได้นิติบุคคล (CIT = 0) — ใช้เกณฑ์ "กึ่งหนึ่งของภาษีปีก่อน" ไม่ได้</b>
+      เกณฑ์เหตุอันสมควรตาม ป.50/2537 (ชำระภาษีครึ่งปีไม่น้อยกว่ากึ่งหนึ่งของภาษีปีก่อน) เทียบไม่ได้เมื่อปีก่อนไม่มีภาษี
+      โปรดประเมินจากผลประกอบการจริงที่คาดว่าจะเกิดขึ้นทั้งปีแทน${r.priorCitIsComputed ? '' : ' — ถ้าปีก่อนมีภาษี ให้กรอก "ภาษีเงินได้นิติบุคคล ปีก่อน" ในขั้นตอนที่ 2'}</div>`;
+  }
+  if (s.status === 'ok') {
+    return `<div class="alert ok"><b>✓ มีเหตุอันสมควร (ป.50/2537) — ภาษีครึ่งปีไม่น้อยกว่ากึ่งหนึ่งของภาษีปีก่อน</b>
+      ภาษีครึ่งปีตามประมาณการ ${fmt(r.tax)} บาท ≥ กึ่งหนึ่งของภาษีทั้งปีของปีก่อน (${fmt(s.priorCit)} ÷ 2 = ${fmt(s.halfPrior)} บาท)
+      — แม้กำไรจริงทั้งปีจะสูงกว่าประมาณการเกิน 25% ก็ถือว่ามีเหตุอันสมควร ไม่ต้องเสียเงินเพิ่ม 20% ตามมาตรา 67 ตรี</div>`;
+  }
+  const extra = Math.ceil(s.extraProfit / 1000) * 1000;
+  return `<div class="alert danger"><b>⛔ ระวังขาดเกิน 25% — ภาษีครึ่งปีต่ำกว่ากึ่งหนึ่งของภาษีปีก่อน</b>
+    ภาษีครึ่งปีตามประมาณการ ${fmt(r.tax)} บาท น้อยกว่ากึ่งหนึ่งของภาษีทั้งปีของปีก่อน (${fmt(s.priorCit)} ÷ 2 = ${fmt(s.halfPrior)} บาท) ขาดอยู่ <b>${fmt(s.gap)} บาท</b>
+    <ul>
+      <li>ถ้าต้องการเข้าเกณฑ์เหตุอันสมควรตาม ป.50/2537 ต้องเพิ่มประมาณการกำไรสุทธิเพื่อเสียภาษีทั้งปีอีกประมาณ <b>${fmt(extra)} บาท</b> (เป็น ${fmt(r.taxableProfit + extra)} บาท)</li>
+      <li>หรือเตรียมเหตุผล/เอกสารสนับสนุนว่ากำไรปีนี้ลดลงจริง (เช่น สูญเสียลูกค้าหลัก ปิดสาขา ต้นทุนขึ้น) เพื่อใช้เป็นเหตุอันสมควรกรณีถูกประเมิน</li>
+    </ul></div>`;
+}
+
+/* ---------- รายการตรวจสอบความถูกต้อง (ขั้น 4) — ถอดจากช่องตรวจในไฟล์ Estimate PND.51: D7 อัตราภาษี · I25 กระทบยอด · B35 ฐานภาษีแบ่งช่วง · D25 ภาษีปีก่อน · I29 เหตุอันสมควร ---------- */
+function validationChecks(r) {
+  const c = activeCompany();
+  const list = [];
+  const push = (st, label, detail) => list.push({ st, label, detail });
+  push(/^\d{13}$/.test(c.taxId || '') ? 'ok' : 'warn', 'เลขประจำตัวผู้เสียภาษี 13 หลัก', c.taxId || 'ยังไม่กรอก (ขั้นตอนที่ 1)');
+  push(c.yearEnd ? 'ok' : 'warn', 'วันสิ้นรอบบัญชี', c.yearEnd || 'ยังไม่กรอก (ขั้นตอนที่ 1)');
+  const k = rateCaseCheck();
+  if (k && k.known) {
+    push(k.ok ? 'ok' : 'bad', 'อัตราภาษีตรงเกณฑ์ SME (ทุน ≤ 5 ล้าน และรายได้ ≤ 30 ล้าน)',
+      `ทุน ${k.capital ? fmt(k.capital) : '–'} · รายได้ ${fmt(k.revenue)} → ${k.expected === 'sme' ? 'SME' : '20%'}${k.ok ? '' : ' แต่เลือกไว้เป็น ' + (k.actual === 'sme' ? 'SME' : '20%')}`);
+  } else push('warn', 'อัตราภาษีตรงเกณฑ์ SME', 'ยังไม่มีทุนจดทะเบียน/รายได้ให้ตรวจ — กรอกทุนในขั้นตอนที่ 1');
+  if (r.entityType === 'sme' && r.revenue > 27000000 && r.revenue <= 30000000)
+    push('warn', 'รายได้ใกล้เพดาน SME 30 ล้านบาท', `ประมาณการรายได้ ${fmt(r.revenue)} — ถ้ารายได้จริงทั้งปีเกิน 30 ล้าน ต้องใช้อัตรา 20% ทั้งปี`);
+  if (r.revenue || r.expense) {
+    const d = r.revenue - r.expense - r.profit;
+    push(Math.abs(d) <= 1 ? 'ok' : 'bad', 'รายได้ − รายจ่าย = กำไรสุทธิทางบัญชี',
+      Math.abs(d) <= 1 ? `${fmt(r.revenue)} − ${fmt(r.expense)} = ${fmt(r.profit)}` : `ต่างกัน ${fmt(d)} บาท — ตรวจช่องประมาณการในขั้นตอนที่ 3`);
+  }
+  if (parsedB) {
+    const bRev = parsedB.totals.revenue;
+    const est = r.revenue || (estimatePeriod() ? roundedLines(estimatePeriod()).revenue : 0);
+    if (bRev > 0 && est > 0) {
+      const ratio = est / bRev;
+      push(est + 1 < bRev ? 'bad' : (ratio < 1.5 ? 'warn' : 'ok'), 'ประมาณการรายได้ทั้งปี ≥ รายได้จริงครึ่งปีแรก (งบ B)',
+        est + 1 < bRev ? `ทั้งปี ${fmt(est)} ต่ำกว่าครึ่งปีแรก ${fmt(bRev)} — เป็นไปไม่ได้` :
+        `ทั้งปี ${fmt(est)} เทียบครึ่งปี ${fmt(bRev)} (${ratio.toFixed(2)} เท่า)${ratio < 1.5 ? ' — ต่ำกว่า 1.5 เท่า ตรวจว่าครึ่งปีหลังลดลงจริง' : ''}`);
+    }
+    const bNp = parsedB.netProfit;
+    if (bNp > 0 && r.profit < bNp)
+      push('warn', 'ประมาณการกำไรทั้งปีต่ำกว่ากำไรจริงครึ่งปีแรก', `ทั้งปี ${fmt(r.profit)} < ครึ่งปีแรก ${fmt(bNp)} — เท่ากับครึ่งปีหลังขาดทุน ${fmt(bNp - r.profit)} ควรมีเหตุผลรองรับ`);
+  }
+  if (r.addBack < 0) push('bad', 'บวกกลับค่าใช้จ่ายต้องไม่ติดลบ', fmt(r.addBack));
+  if (r.exempt < 0) push('bad', 'รายได้ยกเว้นต้องไม่ติดลบ', fmt(r.exempt));
+  push(Math.abs((r.profit + r.addBack - r.exempt) - r.taxableBeforeLoss) <= 1 ? 'ok' : 'bad',
+    'กำไรทางบัญชี + บวกกลับ − รายได้ยกเว้น = กำไรทางภาษีก่อนหักขาดทุน', fmt(r.taxableBeforeLoss));
+  if (r.lossUsed || r.availableLoss) {
+    const overProfit = r.lossUsed > Math.max(r.taxableBeforeLoss, 0) + 1;
+    const overAvail = r.availableLoss > 0 && r.lossUsed > r.availableLoss + 1;
+    push(overAvail ? 'bad' : (overProfit ? 'warn' : 'ok'), 'ขาดทุนสะสมที่ใช้ ไม่เกินยอดยกมา และไม่เกินกำไรที่มี',
+      overAvail ? `ใช้ ${fmt(r.lossUsed)} เกินยอดยกมา ${fmt(r.availableLoss)}` :
+      overProfit ? `ใช้ ${fmt(r.lossUsed)} เกินกำไรก่อนหักขาดทุน ${fmt(Math.max(r.taxableBeforeLoss, 0))} — ภาษีเป็น 0 อยู่แล้ว แต่ยอดที่ใช้จริงควรไม่เกินกำไร (ไฟล์ Excel หักเต็มจำนวนโดยไม่จำกัด)` :
+      `ใช้ ${fmt(r.lossUsed)} จากยอดยกมา ${fmt(r.availableLoss)}${r.lossAuto ? ' (หักให้อัตโนมัติ)' : ''}`);
+  }
+  if (r.brackets) {
+    const s = r.brackets.reduce((a, b) => a + b.amount, 0);
+    push(Math.abs(s - r.half) <= 1 ? 'ok' : 'bad', 'ฐานภาษีแต่ละช่วงรวมเท่ากับกึ่งหนึ่งของกำไร', `${fmt(s)} = ${fmt(r.half)}`);
+  }
+  const py = computePriorYearTax();
+  if (!(r.wht > 0) && py.wht > 0 && r.revenue > 0)
+    push('warn', 'ภาษีถูกหัก ณ ที่จ่ายครึ่งปีแรก ยังเป็น 0', `ปีก่อนมี WHT ${fmt(py.wht)} — ตรวจว่าลืมดึงจากงบทดลอง B (บัญชี 1154xx) หรือรายงาน WHT หรือไม่`);
+  else if (r.wht > 0) push('ok', 'ภาษีถูกหัก ณ ที่จ่ายครึ่งปีแรก', fmt(r.wht));
+  if (r.wht > r.tax && r.tax > 0) push('warn', 'WHT สูงกว่าภาษีครึ่งปี', `ชำระไว้เกิน ${fmt(r.wht - r.tax)} บาท — ยอดชำระตามแบบ = 0 และนำไปเครดิตใน ภ.ง.ด.50`);
+  if (py.cit > 0 && !py.citIsComputed && py.accProfit !== null) {
+    const calc = estimateTaxOn(Math.max(py.taxable, 0), r.entityType);
+    push(Math.abs(calc - py.cit) <= 1 ? 'ok' : 'warn', 'ภาษีปีก่อนที่กรอก ตรงกับที่คำนวณจากกำไรปีก่อน (ช่องตรวจ D25)',
+      Math.abs(calc - py.cit) <= 1 ? fmt(py.cit) : `กรอก ${fmt(py.cit)} แต่คำนวณได้ ${fmt(calc)} — อัตราปีก่อนอาจต่างจากปีนี้ หรือกำไรทางภาษีปีก่อนต่างจากงบ A`);
+  }
+  const s = r.safeHarbour;
+  if (s) push(s.status === 'ok' ? 'ok' : 'warn', 'ภาษีครึ่งปี ≥ กึ่งหนึ่งของภาษีปีก่อน (เหตุอันสมควร ป.50/2537)',
+    s.status === 'na' ? 'ปีก่อนไม่มีภาษี — เทียบไม่ได้' : `${fmt(r.tax)} เทียบ ${fmt(s.halfPrior)}${s.status === 'ok' ? '' : ' — ขาด ' + fmt(s.gap)}`);
+  const ei = c.estimateImport;
+  if (ei && ei.tax !== undefined) {
+    const d1 = Math.abs((ei.tax || 0) - r.tax), d2 = Math.abs((ei.netPay || 0) - r.netPay);
+    push(d1 <= 1 && d2 <= 1 ? 'ok' : 'warn', 'ผลคำนวณตรงกับไฟล์ Estimate PND.51 (Excel) ที่นำเข้า',
+      d1 <= 1 && d2 <= 1 ? `ภาษี ${fmt(ei.tax)} · ${payText(ei.netPay)}` :
+      `Excel: ภาษี ${fmt(ei.tax)} · ${payText(ei.netPay)} — โปรแกรม: ภาษี ${fmt(r.tax)} · ${payText(r.netPay)} — ตัวเลขถูกแก้หลังนำเข้า หรือไฟล์ Excel คำนวณต่างจากโปรแกรม`);
+  }
+  return list;
+}
+function validationHtml(r) {
+  const list = validationChecks(r);
+  const ico = { ok: '✓', warn: '⚠', bad: '✗' }, cls = { ok: 'vc-ok', warn: 'vc-warn', bad: 'vc-bad' };
+  const nBad = list.filter(x => x.st === 'bad').length, nWarn = list.filter(x => x.st === 'warn').length;
+  const head = nBad ? `<span class="wf-badge wf-returned" style="font-size:.78rem;padding:3px 10px">✗ พบ ${nBad} รายการต้องแก้</span>`
+             : nWarn ? `<span class="wf-badge" style="font-size:.78rem;padding:3px 10px;background:var(--amber-light);color:#6e4a12">⚠ ${nWarn} รายการควรตรวจ</span>`
+             : `<span class="wf-badge wf-approved" style="font-size:.78rem;padding:3px 10px">✓ ผ่านทุกรายการ</span>`;
+  return `<div class="vcheck"><div class="sub-head" style="margin-top:18px">รายการตรวจสอบความถูกต้อง <span class="hint" style="font-weight:400">(ตามช่องตรวจในไฟล์ Estimate PND.51 ของสำนักงาน)</span> ${head}</div>
+    <ul>${list.map(x => `<li class="${cls[x.st]}"><span class="vc-ico">${ico[x.st]}</span><span><b>${x.label}</b><br><span class="hint">${x.detail}</span></span></li>`).join('')}</ul></div>`;
+}
+
+/* ---------- นำเข้าไฟล์ Estimate PND.51 ของสำนักงาน (Excel) — อ่านชีต "Estimate PND.51" ทั้ง 2 ผัง (ข้อมูลเริ่มคอลัมน์ B หรือ D) ---------- */
+// ยอดชำระตามแบบ: ติดลบ = ภาษีถูกหัก ณ ที่จ่ายเกินภาษี (ชำระ 0 และเครดิตต่อ)
+function payText(netPay) { return netPay < 0 ? `ชำระ 0.00 บาท (ถูกหัก ณ ที่จ่ายเกิน ${fmt(-netPay)} บาท)` : `ชำระ ${fmt(netPay)} บาท`; }
+function thaiYearEndText(v) {
+  if (typeof v === 'number' && v > 20000 && XLSX.SSF && XLSX.SSF.parse_date_code) {
+    const d = XLSX.SSF.parse_date_code(v);
+    if (d && d.y) return `${d.d}/${d.m}/${d.y < 2400 ? d.y + 543 : d.y}`;
+  }
+  if (v instanceof Date && !isNaN(v)) { const y = v.getFullYear(); return `${v.getDate()}/${v.getMonth() + 1}/${y < 2400 ? y + 543 : y}`; }
+  return String(v || '').trim();
+}
+function parseEstimateWorkbook(wb) {
+  const name = wb.SheetNames.find(n => n.replace(/\s+/g, '').toLowerCase().startsWith('estimatepnd'));
+  if (!name) throw new Error('ไม่พบชีต "Estimate PND.51" ในไฟล์ — ต้องเป็นไฟล์ XXX_2026_Estimate PND.51.xlsx ของสำนักงาน');
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
+  const cell = (r, c) => (aoa[r - 1] || [])[c - 1];   // อ้างแบบ Excel (แถว/คอลัมน์เริ่ม 1)
+  let hdr = 0, cP = 0, cX = 0, cE = 0, cR = 0;
+  for (let r = 8; r <= 12 && !hdr; r++) {
+    for (let c = 1; c <= 20; c++) {
+      const v = cell(r, c);
+      if (typeof v !== 'string') continue;
+      const t = v.trim();
+      if (/^YE\s*\d{4}/i.test(t)) { hdr = r; cP = c; }
+      else if (/^actual/i.test(t)) cX = c;
+      else if (/^est/i.test(t)) cE = c;
+      else if (/^round/i.test(t)) cR = c;
+    }
+  }
+  if (!(hdr && cP && cX && cE && cR)) {
+    let boi = false;
+    for (let r = 8; r <= 14; r++) for (let c = 1; c <= 30; c++) { const v = cell(r, c); if (typeof v === 'string' && v.toUpperCase().includes('BOI')) boi = true; }
+    if (boi) throw new Error('ไฟล์นี้เป็นผัง BOI (Total / BOI / Non-BOI ของกลุ่ม Constant/BC) ซึ่งโปรแกรมยังไม่รองรับการนำเข้าอัตโนมัติ — กรอกตัวเลขเองในขั้นตอนที่ 3 หรือแจ้งผู้ดูแลให้เพิ่มผังนี้');
+    throw new Error('ไม่พบหัวคอลัมน์ YE / Actual Half / Est. Full / Round ในชีต Estimate PND.51 — รูปแบบไฟล์ต่างจากที่โปรแกรมรู้จัก');
+  }
+  const rowOf = (re, dflt) => { for (let r = 1; r <= 60; r++) { const v = cell(r, 1); if (typeof v === 'string' && re.test(v.trim())) return r; } return dflt; };
+  const rRev = rowOf(/^Revenue$/i, 11), rCost = rowOf(/^Less\s*:\s*Cost/i, 12), rSGA = rowOf(/SGA/i, 14),
+        rInt = rowOf(/Interest/i, 16), rNP = rowOf(/^Net Profit/i, 17), rAddRev = rowOf(/Revenue \(Less/i, 19),
+        rAddExp = rowOf(/Expense \(Greater/i, 20), rTaxable = rowOf(/^Taxable Profit/i, 21),
+        rCIT = rowOf(/^CIT/i, 25), rWT = rowOf(/^W\/T/i, 26), rNetPaid = rowOf(/^Net Paid/i, 28);
+  const n = v => { if (v === null || v === undefined || v === '') return 0; const x = parseFloat(String(v).replace(/,/g, '')); return isFinite(x) ? x : 0; };
+  // ในไฟล์ Excel ค่าใช้จ่ายเป็นลบ — โปรแกรมเก็บค่าใช้จ่ายเป็นบวก (ระบุ "หัก") จึงกลับเครื่องหมาย
+  const period = col => ({ revenue: n(cell(rRev, col)), cost: -n(cell(rCost, col)), sga: -n(cell(rSGA, col)), interest: -n(cell(rInt, col)),
+    net: n(cell(rNP, col)), addRev: n(cell(rAddRev, col)), addExp: n(cell(rAddExp, col)), taxable: n(cell(rTaxable, col)) });
+  const company = String(cell(1, 1) || '').trim();
+  const yearEnd = thaiYearEndText(cell(2, cR + 1));
+  const fyBE = parseInt((/(\d{4})\s*$/.exec(yearEnd) || [])[1]) || 0;
+  const toParsed = (p, periodText) => {
+    if (!p.revenue && !p.cost && !p.sga && !p.interest && !p.net) return null;
+    const accounts = [
+      { code: '4', name: 'รายได้รวม (จากไฟล์ Estimate)', group: 'revenue', amount: p.revenue },
+      { code: '51', name: 'ต้นทุนขาย/บริการ (จากไฟล์ Estimate)', group: 'cost', amount: p.cost },
+      { code: '52', name: 'ค่าใช้จ่ายขายและบริหาร (จากไฟล์ Estimate)', group: 'sga', amount: p.sga },
+      { code: '58', name: 'ดอกเบี้ยจ่าย (จากไฟล์ Estimate)', group: 'interest', amount: p.interest }
+    ].filter(a => a.amount);
+    const totals = { revenue: p.revenue, cost: p.cost, sga: p.sga, interest: p.interest, tax: 0 };
+    const grossMargin = totals.revenue - totals.cost, ebit = grossMargin - totals.sga;
+    return { company, period: periodText, accounts, totals, grossMargin, ebit, netProfit: ebit - totals.interest, whtTotal: 0, fromEstimate: true };
+  };
+  const prior = period(cP), actual = period(cX), est = period(cE), round = period(cR);
+  const rateText = String(cell(7, cP) || '').trim();
+  const entityType = /20\s*%|ทั่วไป/.test(rateText) ? 'general' : (/SME|ขั้นบันได/i.test(rateText) ? 'sme' : '');
+  // ตารางขาดทุนสะสม (แถว 37–45): คอลัมน์ กำไร(ขาดทุน) · ขาดทุนสะสมใช้ไป · ติ๊กใช้สิทธิปีนี้ → ยอดคงเหลือที่ใช้ได้ = −(ขาดทุน + ใช้ไป) เฉพาะแถวที่ติ๊ก
+  // ป้ายปีในคอลัมน์ A เป็นได้ทั้งข้อความ "01/01/2568- 31/12/2568" (ผังเดิม) หรือวันที่ (ผังใหม่ — Excel เก็บเป็นเลขลำดับวัน ปี ค.ศ.)
+  const yearOfLabel = v => {
+    if (typeof v === 'string') { const m = /(\d{4})\s*$/.exec(v.trim()); return m ? parseInt(m[1]) : 0; }
+    if (typeof v === 'number' && v > 20000 && XLSX.SSF && XLSX.SSF.parse_date_code) { const d = XLSX.SSF.parse_date_code(v); return (d && d.y) ? (d.y < 2400 ? d.y + 543 : d.y) : 0; }
+    if (v instanceof Date && !isNaN(v)) { const y = v.getFullYear(); return y < 2400 ? y + 543 : y; }
+    return 0;
+  };
+  const lossRows = {};
+  for (let r = 36; r <= 46; r++) {
+    const yr = yearOfLabel(cell(r, 1));
+    if (!yr) continue;
+    const remain = n(cell(r, cP)) + n(cell(r, cP + 2));
+    const tick = cell(r, cP + 5) === true || String(cell(r, cP + 5)).toUpperCase() === 'TRUE';
+    lossRows[yr] = (tick && remain < 0) ? -remain : 0;
+  }
+  const lossCarry = [1, 2, 3, 4, 5].map(i => lossRows[fyBE - i] || 0);
+  return {
+    company, taxId: excelTaxIdText(cell(4, cP)), capital: n(cell(5, cP)), rateText, entityType, yearEnd, fyBE,
+    jobCode: String(cell(1, cR + 1) || '').trim(),
+    preparer: String(cell(3, cR + 1) || '').trim(), reviewer: String(cell(4, cR + 1) || '').trim(), approver: String(cell(5, cR + 1) || '').trim(),
+    tbA: toParsed(prior, `ปีก่อน ${String(cell(hdr, cP) || '')}`), tbB: toParsed(actual, String(cell(hdr, cX) || 'ครึ่งปีแรก')), tbC: toParsed(est, String(cell(hdr, cE) || 'ประมาณการทั้งปี')),
+    prior: { net: prior.net, addBack: prior.addExp, exempt: -prior.addRev, lossUsed: -n(cell(22, cP)), cit: n(cell(rCIT, cP)), wht: -n(cell(rWT, cP)), pnd51: -n(cell(rWT + 1, cP)), payable: n(cell(rNetPaid, cP)) },
+    round,
+    cur: { lossUsed: -n(cell(26, cR)), taxableAfterLoss: n(cell(27, cR)), half: n(cell(28, cR)), tax: n(cell(29, cR)), wht: -n(cell(30, cR)), netPay: n(cell(31, cR)), safeText: String(cell(29, cR + 1) || '') },
+    lossCarry
+  };
+}
+function applyEstimateToCompany(c, E, fileName) {
+  if (E.company) c.name = E.company;
+  if (E.taxId) c.taxId = E.taxId;
+  if (E.yearEnd) c.yearEnd = E.yearEnd;
+  if (E.fyBE) c.year = E.fyBE;
+  if (E.jobCode) c.jobCode = E.jobCode;
+  if (E.capital) c.capital = E.capital;
+  if (E.entityType) c.entityType = E.entityType;
+  [['preparer', E.preparer], ['reviewer', E.reviewer], ['approver', E.approver]].forEach(([k, v]) => {
+    if (!v) return;
+    c[k] = v;
+    if (!db.employees.some(x => x.name === v)) db.employees.push({ name: v, role: '', rtype: '' });
+  });
+  if (!c.tb || typeof c.tb !== 'object') c.tb = {};
+  if (E.tbA) c.tb.A = E.tbA;
+  if (E.tbB) c.tb.B = E.tbB;
+  if (E.tbC) c.tb.C = E.tbC;
+  const py = ensurePriorYearTax(c);
+  py.addBack = E.prior.addBack; py.exempt = E.prior.exempt; py.lossUsed = E.prior.lossUsed;
+  py.cit = E.prior.cit; py.wht = E.prior.wht; py.payable = E.prior.payable;
+  const t = v => v ? fmt(v) : '';
+  const R = E.round;
+  c.est = {
+    revenue: t(R.revenue), expense: t(R.revenue - R.net), profit: (R.net || R.revenue) ? fmt(R.net) : '',
+    addBack: t(R.addExp), exempt: t(-R.addRev), lastYearProfit: t(E.prior.net),
+    wht: t(E.cur.wht), lossUsed: E.cur.lossUsed ? fmt(E.cur.lossUsed) : ''
+  };
+  c.lossCarry = E.lossCarry;
+  c.estimateImport = { file: fileName, at: new Date().toISOString(), tax: E.cur.tax, netPay: E.cur.netPay, half: E.cur.half, rateText: E.rateText };
+}
+$('fileEst').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const wb = XLSX.read(ev.target.result, { type: 'array' });
+      const E = parseEstimateWorkbook(wb);
+      const c = activeCompany();
+      if (c.name && E.company && companySearchKey(c.name) !== companySearchKey(E.company)
+          && !confirm(`ไฟล์นี้เป็นของ "${E.company}" แต่บริษัทที่เลือกอยู่คือ "${c.name}"\nนำเข้าทับข้อมูลของบริษัทที่เลือกอยู่หรือไม่?\n(กด "ยกเลิก" แล้วไปกด "+ เพิ่มบริษัทใหม่" ในขั้นตอนที่ 1 ก่อน ถ้าต้องการแยกเป็นบริษัทใหม่)`)) {
+        $('fileEst').value = ''; return;
+      }
+      applyEstimateToCompany(c, E, file.name);
+      db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      saveDB();
+      attSave(file, 'tb', 'Estimate PND.51 (Excel สำนักงาน)').then(() => refreshAttachments());
+      renderCompanySelect(); renderEmployeeList(); loadCompanyToForm();
+      $('importError').style.display = 'none';
+      toast(`นำเข้าไฟล์ Estimate ของ ${E.company || c.name} แล้ว — ภาษีครึ่งปีตามไฟล์ ${fmt(E.cur.tax)} บาท · ดูรายการตรวจสอบในขั้นตอนที่ 4`);
+    } catch (err) {
+      $('importError').style.display = 'block';
+      $('importError').innerHTML = '<b>นำเข้าไฟล์ Estimate ไม่สำเร็จ</b>' + escapeHtml(err.message || String(err));
+    }
+    $('fileEst').value = '';
+  };
+  reader.onerror = () => { $('importError').style.display = 'block'; $('importError').innerHTML = '<b>อ่านไฟล์ไม่ได้</b>'; };
+  reader.readAsArrayBuffer(file);
 });
 
 /* ---------- ระบบกลาง (Firebase Cloud Sync) ---------- */
