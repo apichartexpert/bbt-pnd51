@@ -522,7 +522,8 @@
   <div class="card screen-only" id="folderCard">
     <h2><span class="step">📂</span> นำเข้าจากโฟลเดอร์งาน ภ.ง.ด.51 ทั้งชุด</h2>
     <p class="note" style="margin-top:0">เลือกโฟลเดอร์ <b>PND51 2026</b> (มีโฟลเดอร์ย่อยรายบริษัท) — โปรแกรมจะหาไฟล์ Estimate ล่าสุด, งบทดลอง (ชื่อมี "งบทดลอง" — ปี 2025 = งวด A · 2026 = งวด B · "ประมาณการ" = งวด C), แบบที่ยื่นแล้ว (TAX_FORM_P51…), ใบเสร็จ (RECEIPT_P51…), Estimate ฉบับ PDF, งบการเงินปีก่อน (…_FS.pdf) และ ภ.ง.ด.50 (TAX_FORM_P50/RECEIPT_P50) ของแต่ละบริษัท แล้วเติมข้อมูลคำนวณ + เอกสารแนบ + สถานะยื่นแบบ/ชำระเงินให้ · ตอนสแกนจะเห็นผล "ทบทวนล่วงหน้า" ของแต่ละบริษัทก่อนตัดสินใจนำเข้า และหลังนำเข้าโปรแกรมทบทวนทุกบริษัทให้ทันที
-      · เลือกโฟลเดอร์ <b>PND51 2026 Submission</b> เพิ่มได้ (ไฟล์ "…_PND.51 R.pdf" = แบบที่ยื่นแล้ว จับคู่ด้วยรหัสงาน/ชื่อบริษัท/เลขภาษี)
+      · เลือกโฟลเดอร์ <b>PND51 2026 Submission</b> เพิ่มได้ (ไฟล์ "…_PND.51 R.pdf" = ใบเสร็จ + แบบที่ยื่นแล้ว — โปรแกรมอ่านเลขภาษี วันที่ชำระ เลขที่ใบเสร็จ และจำนวนเงินจาก PDF แล้วจับคู่ด้วยเลขภาษีก่อน · PDF ที่เป็นภาพสแกนอ่านไม่ได้ จะแจ้งในรายงาน)
+      · บริษัทที่มีข้อผิดพลาดจะถูกข้าม ส่วนที่เหลือนำเข้าตามปกติ และสรุปใน <b>รายงานข้อผิดพลาด</b> (ส่งออก Excel ได้)
       · <b>ไฟล์บน OneDrive ต้องดาวน์โหลดลงเครื่องก่อน</b> (คลิกขวาโฟลเดอร์ → Always Keep on This Device) · เอกสารแนบเก็บในเครื่องนี้ ไม่ซิงค์ขึ้นระบบกลาง (ตัวเลข/สถานะซิงค์ตามปกติ)</p>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div class="field"><label>โฟลเดอร์ PND51 2026 (รายบริษัท)</label><input type="file" id="folderMain" webkitdirectory multiple></div>
@@ -533,6 +534,11 @@
       <button class="btn-primary btn-sm" id="btnFolderImport" type="button" style="display:none">⭱ นำเข้าทั้งหมดตามตาราง</button>
       <span class="hint" id="folderProgress"></span>
     </div>
+    <div id="folderConfirm" class="note" hidden style="border:1px solid var(--blue); background:var(--blue-light); margin-top:8px">
+      <div id="folderConfirmText"></div>
+      <div class="btn-row" style="margin-top:8px"><button class="btn-primary btn-sm" id="btnFolderConfirmYes" type="button">✓ ยืนยันนำเข้า</button><button class="btn-outline btn-sm" id="btnFolderConfirmNo" type="button">ยกเลิก</button></div>
+    </div>
+    <div id="folderReport"></div>
     <div id="folderPlan" style="overflow-x:auto; margin-top:10px"></div>
   </div>
   <div class="card screen-only" id="jobsCard">
@@ -1136,6 +1142,7 @@ $('btnDeleteCompany').addEventListener('click', () => {
 // ---- ค้นหาบริษัท: เทียบชื่อแบบตัดคำนำหน้า/ต่อท้ายนิติบุคคลทิ้ง (บริษัท/หจก./จำกัด ฯลฯ) หรือเทียบ Job Code ----
 function companySearchKey(s) {
   return String(s || '')
+    .replace(/\u0E4D\u0E32/g, '\u0E33')                 // "จํากัด" (นิคหิต+สระอา) = "จำกัด"
     .replace(/บริษัท|ห้างหุ้นส่วนจำกัด|ห้างหุ้นส่วนสามัญนิติบุคคล|ห้างหุ้นส่วนสามัญ|หจก\.?|บจก\.?|บมจ\.?|จำกัด\s*\(มหาชน\)|จำกัด|\(มหาชน\)/g, '')
     .replace(/\s+/g, '')
     .toLowerCase();
@@ -2584,7 +2591,7 @@ function renderFilingStep() {
   const doneFiling = wf.filing
     ? `<div class="hint" style="margin-bottom:6px">📮 ยื่นแบบเมื่อ <b>${fmtD(wf.filing.date)}</b> โดย ${escapeHtml(wf.filing.by)} · ใบตอบรับ: ${escapeHtml(wf.filing.fileName || '-')}</div>` : '';
   const donePayment = wf.payment
-    ? `<div class="hint" style="margin-bottom:6px">💰 ชำระเงินเมื่อ <b>${fmtD(wf.payment.date)}</b> โดย ${escapeHtml(wf.payment.by)} · ใบเสร็จ: ${escapeHtml(wf.payment.fileName || '-')}</div>` : '';
+    ? `<div class="hint" style="margin-bottom:6px">💰 ชำระเงินเมื่อ <b>${fmtD(wf.payment.date)}</b> โดย ${escapeHtml(wf.payment.by)}${wf.payment.amount !== null && wf.payment.amount !== undefined ? ` · จำนวน <b>${fmt(wf.payment.amount)}</b> บาท` : ''}${wf.payment.receiptNo ? ` · เลขที่ใบเสร็จ ${escapeHtml(wf.payment.receiptNo)}` : ''} · ใบเสร็จ: ${escapeHtml(wf.payment.fileName || '-')}</div>` : '';
   let h = '';
   if (!['approved', 'filed', 'completed'].includes(wf.status)) {
     h = `<p class="note">ต้องผ่านการอนุมัติในขั้นตอนที่ 5 ก่อน จึงจะบันทึกการยื่นแบบได้ (สถานะตอนนี้: ${st.label})</p>`;
@@ -3276,11 +3283,16 @@ $('btnReviewExport').addEventListener('click', reviewExport);
 $('reviewFilters').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { $('reviewFilters').querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); reviewFilter = b.dataset.f; renderReview(); }));
 $('reviewSearch').addEventListener('input', e => { reviewQ = e.target.value.trim().toLowerCase(); renderReview(); });
 
-/* ---------- นำเข้าจากโฟลเดอร์งานทั้งชุด (2026-09-13) ----------
+/* ---------- นำเข้าจากโฟลเดอร์งานทั้งชุด (2026-09-13 · ปรับรอบ 26) ----------
    โครงสร้างโฟลเดอร์สำนักงาน: PND51 2026/<CODE>_<ชื่อบริษัท>/ (หรือ PND51 2026/00.Group X/<CODE>_<ชื่อ>/) มีไฟล์
    XXX_2026_Estimate PND.51*.xlsx (คำนวณ) · XXX_2026_Estimate PND.51*.pdf (ฉบับพิมพ์) · TAX_FORM_P51…pdf (แบบที่ยื่น e-Filing) · RECEIPT_P51…pdf (ใบเสร็จ)
-   โฟลเดอร์ PND51 2026 Submission/ มีไฟล์ <CODE>_<ชื่อ>_PND.51 R.pdf (แบบที่ยื่นแล้ว) */
+   โฟลเดอร์ PND51 2026 Submission/ มีไฟล์ <CODE>_<ชื่อ>_PND.51 R.pdf = ใบเสร็จ (หน้า 1) + แบบที่ยื่น (หน้าถัดไป) รวมไฟล์เดียว
+   รอบ 26: อ่านข้อความใน PDF (ใบเสร็จ: เลขภาษี · วันชำระ · เลขที่ใบเสร็จ · จำนวนเงิน) จับคู่ด้วยเลขภาษีก่อน
+   · นำเข้าทีละบริษัท รายการที่ผิดพลาดข้ามไป (ไม่กระทบรายการอื่น) แล้วสรุปเป็นรายงานข้อผิดพลาด
+   · ยืนยันการนำเข้าในหน้าเว็บ (ไม่ใช้กล่อง confirm ของเบราว์เซอร์ ซึ่งบางหน้าต่างบล็อกไว้ ทำให้กดแล้วไม่เกิดอะไร) */
 let folderPlan = [];
+let folderExtra = [];          // ข้อผิดพลาด/คำเตือนที่ไม่ผูกกับโฟลเดอร์บริษัทใด (เช่น ไฟล์ Submission ที่จับคู่ไม่ได้)
+let folderImportLog = null;    // ผลการนำเข้าครั้งล่าสุด (สำหรับรายงาน)
 const fnIsEstXlsx = n => /estimate\s*pnd\.?\s*51/i.test(n) && /\.xlsx?$/i.test(n) && !/^~\$|^Copy of|Compare/i.test(n);
 const fnIsEstPdf = n => /estimate\s*pnd\.?\s*51/i.test(n) && /\.pdf$/i.test(n);
 const fnIsForm51 = n => /^(TAX_FORM_P51|PND51_P51)/i.test(n) && /\.pdf$/i.test(n);
@@ -3297,8 +3309,107 @@ function tbSlotOf(name) {
   if (/2026|2569/.test(name)) return 'B';
   return '';
 }
+const withTimeout = (pr, ms, label) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} ใช้เวลานานเกิน ${Math.round(ms / 1000)} วินาที`)), ms))]);
+// พักให้หน้าจออัปเดต — ถ้าผู้ใช้สลับไปแท็บอื่น setTimeout ถูกหน่วงเหลือวินาทีละครั้ง (สแกน 200 โฟลเดอร์จะช้ามาก) จึงใช้ MessageChannel แทน
+const yieldUI = () => new Promise(r => { if (!document.hidden) { setTimeout(r, 0); return; } const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0); });
+const taxDigits = v => String(v || '').replace(/\D/g, '');
+// ข้อความผิดพลาดตอนอ่านไฟล์ → ภาษาคน (ไฟล์ OneDrive ที่ยังไม่ดาวน์โหลดจะอ่านไม่ได้)
+function fileErrText(e) {
+  const m = (e && (e.message || e.name)) || String(e);
+  if (/NotReadable|NotFound|could not be read|permission/i.test(m)) return 'อ่านไฟล์จากเครื่องไม่ได้ (ไฟล์บน OneDrive อาจยังไม่ได้ดาวน์โหลด หรือถูกย้าย/เปลี่ยนชื่อหลังเลือกโฟลเดอร์)';
+  return m;
+}
+// SheetJS ที่ฝังในโปรแกรมเป็นรุ่นย่อ อ่าน .xls (Excel 97-2003) ไม่ได้ → โหลดรุ่นเต็มจาก cdnjs เฉพาะตอนเจอไฟล์ .xls
+let xlsxFullPromise = null;
+function loadXlsxFull() {
+  if (!xlsxFullPromise) {
+    const mini = window.XLSX;
+    xlsxFullPromise = loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js')
+      .then(() => { const full = window.XLSX; window.XLSX = mini; if (!full || full === mini) throw new Error('โหลดตัวอ่าน .xls ไม่สำเร็จ'); return full; })
+      .catch(e => { xlsxFullPromise = null; window.XLSX = mini; throw new Error('อ่านไฟล์ .xls ต้องต่ออินเทอร์เน็ตเพื่อโหลดตัวอ่านเพิ่ม — ' + (e.message || e)); });
+  }
+  return xlsxFullPromise;
+}
+async function readWorkbookFile(f) {
+  if (!f.size) throw new Error('ไฟล์ว่าง (0 ไบต์) — ไฟล์บน OneDrive อาจยังไม่ได้ดาวน์โหลด');
+  const buf = await withTimeout(f.arrayBuffer(), 90000, 'อ่านไฟล์ ' + f.name);
+  try { return XLSX.read(buf, { type: 'array' }); }
+  catch (e) {
+    if (!/xlscfb|cfb|is not defined|Unsupported/i.test(e.message || '')) throw e;
+    const full = await loadXlsxFull();
+    return full.read(buf, { type: 'array' });
+  }
+}
+// ตัวอ่านข้อความ PDF (pdf.js จาก cdnjs — โหลดครั้งแรกที่ต้องใช้)
+let pdfjsPromise = null;
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (!pdfjsPromise) {
+    const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+    pdfjsPromise = loadScript(base + 'pdf.min.js').then(() => {
+      const lib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+      if (!lib) throw new Error('โหลดตัวอ่าน PDF ไม่สำเร็จ');
+      lib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js';
+      window.pdfjsLib = lib;
+      return lib;
+    }).catch(e => { pdfjsPromise = null; throw e; });
+  }
+  return pdfjsPromise;
+}
+async function pdfPagesText(file, maxPages) {
+  const lib = await loadPdfJs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await lib.getDocument({ data, isEvalSupported: false }).promise;
+  const pages = [], numPages = doc.numPages;
+  try {
+    for (let i = 1; i <= Math.min(numPages, maxPages || 8); i++) {
+      const tc = await (await doc.getPage(i)).getTextContent();
+      pages.push(tc.items.map(it => (it.str || '') + (it.hasEOL ? '\n' : ' ')).join(''));
+    }
+  } finally { try { doc.destroy(); } catch (e) { /* ไม่เป็นไร */ } }
+  return { pages, numPages };
+}
+// อ่านใบเสร็จ/แบบ ภ.ง.ด.51 จากข้อความ PDF ของกรมสรรพากร (e-Filing)
+function parseRdPdfText(pages) {
+  const out = { receipt: null, formRef: '', formTaxId: '', hasText: pages.some(t => t.replace(/\s+/g, '').length > 40) };
+  for (const t of pages) {
+    const ref = (/P51\d{10}/.exec(t) || [])[0] || '';
+    const amt = /\*{2,}\s*([\d,]+\.\d{2})/.exec(t);
+    if (!out.receipt && ref && amt) {                       // หน้าใบเสร็จ: มีเลขอ้างอิง P51… และจำนวนเงินแบบ ******0.00
+      const tid = /(\d)\s*-\s*(\d{4})\s*-\s*(\d{5})\s*-\s*(\d{2})\s*-\s*(\d)/.exec(t);
+      const dt = /(\d{2})\/(\d{2})\/(25\d{2})/.exec(t);
+      const yr = /\b00\s*\/\s*(25\d{2})\b/.exec(t);
+      const no = new RegExp(ref + '\\s+(\\d{9,13})').exec(t);
+      const amount = parseFloat(amt[1].replace(/,/g, '')) || 0;
+      out.receipt = {
+        refNo: ref, receiptNo: no ? no[1] : '', amount,
+        taxId: tid ? tid.slice(1).join('') : '',
+        date: dt ? `${parseInt(dt[3]) - 543}-${dt[2]}-${dt[1]}` : '',
+        taxYear: yr ? parseInt(yr[1]) : 0,
+        noCharge: /ไม่มีเงินเรียกเก็บ/.test(t) || amount === 0
+      };
+      continue;
+    }
+    if (!out.formRef && /หมายเลขอ้างอิง\s*:?\s*P51\d{10}/.test(t)) {
+      out.formRef = ref;
+      const sp = /(?:^|\D)((?:\d\s){12}\d)(?!\s?\d)/.exec(t);
+      if (sp) out.formTaxId = sp[1].replace(/\s/g, '');
+    }
+  }
+  return out;
+}
+async function readRdPdf(file, maxPages) {
+  const { pages, numPages } = await withTimeout(pdfPagesText(file, maxPages), 60000, 'อ่าน PDF ' + file.name);
+  return Object.assign(parseRdPdfText(pages), { numPages });
+}
+// ชื่อไฟล์ RECEIPT_P51<เลขอ้างอิง>_<เลขที่ใบเสร็จ>.pdf
+function receiptFromFileName(name) {
+  const m = /^RECEIPT_(P51\d{10})_(\d+)/i.exec(name || '');
+  return m ? { refNo: m[1], receiptNo: m[2] } : null;
+}
 // สร้างบริษัทจำลอง (ไม่บันทึก) จากผลสแกน เพื่อดูประเด็นทบทวนได้ตั้งแต่ก่อนนำเข้า
 function previewChecksFromPlan(p) {
+  const empBackup = db.employees.slice();                  // applyEstimateToCompany เพิ่มชื่อพนักงาน — ตอนดูล่วงหน้าไม่ให้แตะฐานจริง
   try {
     const c = newCompany();
     applyEstimateToCompany(c, p.E, p.est ? p.est.name : '');
@@ -3308,16 +3419,26 @@ function previewChecksFromPlan(p) {
     const checks = reviewChecks(r);
     return { checks, sev: checks.some(x => x.st === 'bad') ? 'bad' : checks.some(x => x.st === 'warn') ? 'warn' : 'ok' };
   } catch (e) { return { checks: [{ st: 'warn', cat: 'ตรวจล่วงหน้าไม่ได้', detail: e.message || String(e) }], sev: 'warn' }; }
+  finally { db.employees = empBackup; }
 }
 const latestOf = arr => arr.slice().sort((a, b) => b.lastModified - a.lastModified)[0] || null;
-function folderCodeOf(name) { return String(name || '').split(/_(?=บริษัท|ห้าง|กิจการ|บจ|หจก)/)[0].replace(/_+$/, '').trim(); }
+// รหัสงาน = ส่วนหน้าชื่อก่อน "_" ที่ตามด้วยตัวอักษรไทย (รองรับชื่อพิมพ์ผิด เช่น "บรัษัท", "กินการร่วมค้า")
+function folderCodeOf(name) { return String(name || '').split(/_+(?=[฀-๿])/)[0].replace(/_+$/, '').trim(); }
 function findCompanyByTax(taxId, year) {
-  const t = String(taxId || '').replace(/\D/g, '');
+  const t = taxDigits(taxId);
   if (t.length !== 13) return null;
-  return db.companies.find(x => String(x.taxId || '').replace(/\D/g, '') === t && String(x.year || '') === String(year || '')) || null;
+  return db.companies.find(x => taxDigits(x.taxId) === t && String(x.year || '') === String(year || '')) || null;
+}
+// หาบริษัทเดิมในระบบ: เลขภาษี+ปี → ชื่อบริษัท+ปี (กันนำเข้าซ้ำเป็นบริษัทใหม่ทุกครั้งเมื่อไฟล์ไม่มีเลขภาษี)
+function findCompanyForImport(E) {
+  const byTax = findCompanyByTax(E.taxId, E.fyBE);
+  if (byTax) return byTax;
+  const key = companySearchKey(E.company);
+  if (!key) return null;
+  return db.companies.find(x => companySearchKey(x.name) === key && String(x.year || '') === String(E.fyBE || '')) || null;
 }
 async function attSaveFor(companyId, file, kind, note) {
-  if (file.size > 15 * 1024 * 1024) return null;
+  if (file.size > 15 * 1024 * 1024) return 'big';
   const existing = await attListFor(companyId);
   if (existing.some(a => a.kind === kind && a.name === file.name && a.size === file.size)) return null;   // มีไฟล์เดิมแล้ว ไม่ซ้ำ
   const rec = { id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6), companyId, kind, note: note || '',
@@ -3333,164 +3454,364 @@ function folderGroups(files) {
     let idx = 2, key = segs[1];
     if (/^00/.test(segs[1])) { if (segs.length < 4) continue; key = segs[1] + '/' + segs[2]; idx = 3; }
     const folder = segs[idx - 1];
-    if (/^\d+\./.test(folder) || /^\d{4}$/.test(folder)) continue;   // 1.PBC / 1.Constant Draft / 2025 = ไม่ใช่โฟลเดอร์บริษัท
+    if (/^\d+\./.test(folder) || /^\d{4}$/.test(folder) || /^\./.test(folder)) continue;   // 1.PBC / 2025 / .claude = ไม่ใช่โฟลเดอร์บริษัท
     if (segs.length > idx + 1) continue;                  // ไฟล์ในโฟลเดอร์ย่อยลึกกว่านั้น (เช่น /2025/) ไม่ใช้
     if (!groups.has(key)) groups.set(key, { key, folder, code: folderCodeOf(folder), files: [] });
     groups.get(key).files.push(f);
   }
   return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key, 'th'));
 }
+// ปัญหาของแต่ละโฟลเดอร์: lvl 'error' = ส่วนนั้นไม่ถูกนำเข้า · 'warn' = นำเข้าได้แต่ต้องตรวจ
+const planIssue = (p, lvl, step, file, msg) => p.issues.push({ lvl, step, file: file ? (file.name || file) : '', msg });
 async function folderScan(mainOverride, subOverride) {
   const main = mainOverride || [...($('folderMain').files || [])], subs = (subOverride || [...($('folderSub').files || [])]).filter(f => /\.pdf$/i.test(f.name));
-  if (!main.length) { toast('เลือกโฟลเดอร์ PND51 2026 ก่อน'); return; }
+  if (!main.length && !subs.length) { toast('เลือกโฟลเดอร์ PND51 2026 ก่อน'); return; }
+  if (!main.length) { toast('ต้องเลือกโฟลเดอร์ PND51 2026 (รายบริษัท) ด้วย — ข้อมูลคำนวณมาจากไฟล์ Estimate ในโฟลเดอร์นั้น'); return; }
   const groups = folderGroups(main);
   $('btnFolderImport').style.display = 'none';
-  folderPlan = [];
+  $('folderConfirm').hidden = true;
+  folderPlan = []; folderExtra = []; folderImportLog = null;
+  let pdfOk = true;
+  try { await withTimeout(loadPdfJs(), 30000, 'โหลดตัวอ่าน PDF'); }
+  catch (e) { pdfOk = false; folderExtra.push({ lvl: 'warn', folder: '-', company: '', step: 'อ่าน PDF', file: '', msg: 'โหลดตัวอ่าน PDF ไม่ได้ (' + (e.message || e) + ') — อ่านใบเสร็จได้เฉพาะเลขที่จากชื่อไฟล์ RECEIPT_P51… ไม่มีวันชำระ/จำนวนเงิน' }); }
   let i = 0;
   for (const g of groups) {
     i++;
     $('folderProgress').textContent = `กำลังอ่าน ${i}/${groups.length}: ${g.folder}`;
-    await new Promise(r => setTimeout(r, 0));
+    await yieldUI();
     const p = { key: g.key, folder: g.folder, code: g.code, E: null, err: '', est: null, form: null, receipt: null, estPdf: null, rfile: null, subFile: null, existing: null, wfStatus: null,
-                tbFiles: [], tbParsed: {}, fs: null, pnd50: [], preview: null };
-    p.tbFiles = g.files.filter(f => fnIsTb(f.name));
-    p.fs = latestOf(g.files.filter(f => fnIsFs(f.name)));
-    p.pnd50 = g.files.filter(f => fnIsPnd50(f.name));
-    p.est = latestOf(g.files.filter(f => fnIsEstXlsx(f.name) && /2026/.test(f.name)));
-    p.form = latestOf(g.files.filter(f => fnIsForm51(f.name) && fnHasYear2026(f)));
-    p.receipt = latestOf(g.files.filter(f => fnIsReceipt51(f.name) && fnHasYear2026(f)));
-    p.estPdf = latestOf(g.files.filter(f => fnIsEstPdf(f.name) && /2026/.test(f.name)));
-    p.rfile = latestOf(g.files.filter(f => fnIsFiledR(f.name) && fnHasYear2026(f)));
-    if (!p.est) { p.err = 'ไม่พบไฟล์ XXX_2026_Estimate PND.51.xlsx'; folderPlan.push(p); continue; }
+                tbFiles: [], tbParsed: {}, fs: null, pnd50: [], preview: null, issues: [], rc: null, rcFile: null, subInfo: null };
     try {
-      const wb = XLSX.read(await p.est.arrayBuffer(), { type: 'array' });
-      p.E = parseEstimateWorkbook(wb);
-    } catch (e) { p.err = 'อ่านไฟล์ Estimate ไม่ได้: ' + (e.message || e); folderPlan.push(p); continue; }
-    // งบทดลองจริง (ถ้ามีในโฟลเดอร์) — ใช้แทนงบ 4 บรรทัดจากไฟล์ Estimate ในงวดเดียวกัน
-    for (const f of p.tbFiles) {
-      const slot = tbSlotOf(f.name); if (!slot) continue;
-      try {
-        const twb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
-        const aoa = XLSX.utils.sheet_to_json(twb.Sheets[twb.SheetNames[0]], { header: 1, raw: true, defval: null });
-        const parsed = parseTrialBalance(aoa);
-        if (!p.tbParsed[slot] || f.lastModified > (p.tbParsed[slot]._lm || 0)) { parsed._lm = f.lastModified; parsed._file = f; p.tbParsed[slot] = parsed; }
-      } catch (e) { /* ไม่ใช่งบทดลองรูปแบบที่รู้จัก — ข้าม */ }
+      p.tbFiles = g.files.filter(f => fnIsTb(f.name));
+      p.fs = latestOf(g.files.filter(f => fnIsFs(f.name)));
+      p.pnd50 = g.files.filter(f => fnIsPnd50(f.name));
+      p.est = latestOf(g.files.filter(f => fnIsEstXlsx(f.name) && /2026/.test(f.name)));
+      p.form = latestOf(g.files.filter(f => fnIsForm51(f.name) && fnHasYear2026(f)));
+      p.receipt = latestOf(g.files.filter(f => fnIsReceipt51(f.name) && fnHasYear2026(f)));
+      p.estPdf = latestOf(g.files.filter(f => fnIsEstPdf(f.name) && /2026/.test(f.name)));
+      p.rfile = latestOf(g.files.filter(f => fnIsFiledR(f.name) && fnHasYear2026(f)));
+      if (!p.est) { p.err = 'ไม่พบไฟล์ XXX_2026_Estimate PND.51.xlsx'; planIssue(p, 'error', 'หาไฟล์ Estimate', '', p.err); folderPlan.push(p); continue; }
+      try { p.E = parseEstimateWorkbook(await readWorkbookFile(p.est)); }
+      catch (e) { p.err = 'อ่านไฟล์ Estimate ไม่ได้: ' + fileErrText(e); planIssue(p, 'error', 'อ่านไฟล์ Estimate', p.est, fileErrText(e)); folderPlan.push(p); continue; }
+      if (p.E.oldLayout) planIssue(p, 'warn', 'อ่านไฟล์ Estimate', p.est, 'ไฟล์ผังแบบเก่า (ป้ายแถว Income / Profit / Half Profit) — นำเข้าตัวเลขได้ แต่ไม่มีตารางขาดทุนสะสมรายปี ต้องกรอกเองถ้ามีขาดทุนยกมา');
+      if (p.E.boiLayout) planIssue(p, 'warn', 'อ่านไฟล์ Estimate', p.est, 'ผัง BOI — ตารางขาดทุนสะสมของผังนี้ต้องกรอกเอง');
+      if (taxDigits(p.E.taxId).length !== 13) planIssue(p, 'warn', 'ตรวจข้อมูลบริษัท', p.est, `เลขประจำตัวผู้เสียภาษีในไฟล์ Excel ไม่ครบ 13 หลัก ("${p.E.taxId || 'ว่าง'}")`);
+      // งบทดลองจริง (ถ้ามีในโฟลเดอร์) — ใช้แทนงบ 4 บรรทัดจากไฟล์ Estimate ในงวดเดียวกัน
+      for (const f of p.tbFiles) {
+        const slot = tbSlotOf(f.name);
+        if (!slot) { planIssue(p, 'warn', 'งบทดลอง', f, 'บอกงวดจากชื่อไฟล์ไม่ได้ (ต้องมี 2025 / 2026 / ประมาณการ) — ไม่ได้อ่าน'); continue; }
+        try {
+          const twb = await readWorkbookFile(f);
+          const aoa = XLSX.utils.sheet_to_json(twb.Sheets[twb.SheetNames[0]], { header: 1, raw: true, defval: null });
+          const parsed = parseTrialBalance(aoa);
+          if (!p.tbParsed[slot] || f.lastModified > (p.tbParsed[slot]._lm || 0)) { parsed._lm = f.lastModified; parsed._file = f; p.tbParsed[slot] = parsed; }
+        } catch (e) { planIssue(p, 'warn', 'งบทดลอง', f, 'อ่านงบทดลองไม่ได้: ' + fileErrText(e)); }
+      }
+      // ใบเสร็จในโฟลเดอร์บริษัท (RECEIPT_P51…) — เลขที่จากชื่อไฟล์ + วันชำระ/จำนวนเงินจากข้อความใน PDF
+      if (p.receipt) {
+        const fromName = receiptFromFileName(p.receipt.name) || {};
+        let info = null;
+        if (pdfOk) {
+          try { info = (await readRdPdf(p.receipt, 3)).receipt; if (!info) planIssue(p, 'warn', 'อ่านใบเสร็จ', p.receipt, 'ไม่พบข้อความใบเสร็จใน PDF (อาจเป็นภาพสแกน) — ใช้เลขที่จากชื่อไฟล์'); }
+          catch (e) { planIssue(p, 'warn', 'อ่านใบเสร็จ', p.receipt, 'อ่าน PDF ไม่ได้: ' + fileErrText(e)); }
+        }
+        p.rc = Object.assign({ refNo: '', receiptNo: '', amount: null, taxId: '', date: '', taxYear: 0 }, fromName, info || {});
+        p.rcFile = p.receipt;
+      }
+    } catch (e) {
+      planIssue(p, 'error', 'สแกนโฟลเดอร์', '', fileErrText(e));
+      if (!p.E) p.err = p.err || fileErrText(e);
     }
     folderPlan.push(p);
   }
-  // จับคู่ไฟล์จากโฟลเดอร์ Submission: เลขภาษี 13 หลัก → ชื่อบริษัท → รหัสงาน
-  for (const f of subs) {
-    const m = /\d{13}/.exec(f.name);
+  // ไฟล์จากโฟลเดอร์ Submission: อ่าน PDF → เลขภาษี → จับคู่ด้วยเลขภาษีก่อน แล้วค่อยชื่อบริษัท/รหัสงาน
+  // อ่าน PDF พร้อมกันครั้งละ 4 ไฟล์ (เร็วกว่าทีละไฟล์มาก)
+  const subRead = new Array(subs.length);
+  let si = 0;
+  const readNext = async () => {
+    while (si < subs.length) {
+      const k = si++;
+      $('folderProgress').textContent = `กำลังอ่านไฟล์ Submission ${Math.min(si, subs.length)}/${subs.length}: ${subs[k].name}`;
+      const rec = { info: null, readErr: '' };
+      if (pdfOk) { try { rec.info = await readRdPdf(subs[k], 8); } catch (e) { rec.readErr = fileErrText(e); } }
+      subRead[k] = rec;
+      if (k % 4 === 0) await yieldUI();
+    }
+  };
+  await Promise.all([readNext(), readNext(), readNext(), readNext()]);
+  for (let k = 0; k < subs.length; k++) {
+    const f = subs[k];
+    const { info, readErr } = subRead[k];
+    const pdfTax = info ? ((info.receipt && info.receipt.taxId) || info.formTaxId || '') : '';
     const code = folderCodeOf(f.name);
-    const nameKey = companySearchKey(f.name.replace(/^[^_]*_+/, '').replace(/_?PND\.?51.*$/i, '').replace(/_R\.pdf$/i, ''));
-    let hit = null;
-    if (m) hit = folderPlan.find(p => p.E && String(p.E.taxId) === m[0]);
-    if (!hit && nameKey) hit = folderPlan.find(p => p.E && companySearchKey(p.E.company) === nameKey) || folderPlan.find(p => companySearchKey(p.folder.replace(/^[^_]*_+/, '')) === nameKey);
-    if (!hit && code) hit = folderPlan.find(p => p.code === code) || folderPlan.find(p => p.code.endsWith('_' + code) || code.endsWith('_' + p.code));
-    if (hit && (!hit.subFile || f.lastModified > hit.subFile.lastModified)) hit.subFile = f;
+    const nameKey = companySearchKey(f.name.replace(/\.pdf$/i, '').replace(/^[^฀-๿]*_+/, '').replace(/_?PND\.?\s*51.*$/i, '').replace(/_?R$/i, ''));
+    let hit = null, how = '';
+    if (pdfTax.length === 13) { hit = folderPlan.find(p => p.E && taxDigits(p.E.taxId) === pdfTax); how = hit ? 'tax' : ''; }
+    if (!hit) { const m = /\d{13}/.exec(f.name); if (m) { hit = folderPlan.find(p => p.E && taxDigits(p.E.taxId) === m[0]); how = hit ? 'tax' : ''; } }
+    if (!hit && nameKey) { hit = folderPlan.find(p => p.E && companySearchKey(p.E.company) === nameKey) || folderPlan.find(p => companySearchKey(p.folder.replace(/^[^฀-๿]*_+/, '')) === nameKey); how = hit ? 'name' : ''; }
+    if (!hit && code) { hit = folderPlan.find(p => p.code === code) || folderPlan.find(p => p.code.endsWith('_' + code) || code.endsWith('_' + p.code)); how = hit ? 'code' : ''; }
+    if (!hit) {
+      folderExtra.push({ lvl: 'error', folder: 'PND51 2026 Submission', company: '', step: 'จับคู่ไฟล์ Submission', file: f.name,
+        msg: `จับคู่กับโฟลเดอร์บริษัทไม่ได้${pdfTax ? ` (เลขภาษีใน PDF ${pdfTax})` : ''} — ไม่ได้นำเข้าไฟล์นี้` });
+      continue;
+    }
+    // จับคู่ด้วยชื่อ/รหัส แต่เลขภาษีใน PDF ไม่ตรงกับไฟล์ Excel → ไม่ใช้ไฟล์นี้ (กันแนบใบเสร็จผิดบริษัท)
+    if (how !== 'tax' && pdfTax.length === 13 && taxDigits(hit.E ? hit.E.taxId : '').length === 13 && pdfTax !== taxDigits(hit.E.taxId)) {
+      planIssue(hit, 'error', 'จับคู่ไฟล์ Submission', f, `เลขภาษีใน PDF (${pdfTax}) ไม่ตรงกับไฟล์ Excel (${taxDigits(hit.E.taxId)}) — ไม่ได้แนบไฟล์นี้`);
+      continue;
+    }
+    if (readErr) planIssue(hit, 'warn', 'อ่านไฟล์ Submission', f, 'อ่าน PDF ไม่ได้: ' + readErr);
+    if (hit.subFile && f.lastModified <= hit.subFile.lastModified) { planIssue(hit, 'warn', 'จับคู่ไฟล์ Submission', f, `มีไฟล์ Submission มากกว่า 1 ไฟล์ — ใช้ไฟล์ล่าสุด ${hit.subFile.name}`); continue; }
+    if (hit.subFile) planIssue(hit, 'warn', 'จับคู่ไฟล์ Submission', hit.subFile, `มีไฟล์ Submission มากกว่า 1 ไฟล์ — ใช้ไฟล์ล่าสุด ${f.name}`);
+    hit.subFile = f; hit.subInfo = info; hit.subHow = how;
   }
   for (const p of folderPlan) {
     if (!p.E) continue;
-    p.existing = findCompanyByTax(p.E.taxId, p.E.fyBE);
+    // ใบเสร็จจากไฟล์ Submission (หน้าใบเสร็จ) — ใช้เมื่อโฟลเดอร์บริษัทไม่มี RECEIPT_P51 ที่อ่านวันที่/ยอดได้
+    if (p.subFile && p.subInfo && p.subInfo.receipt && !(p.rc && p.rc.date)) { p.rc = Object.assign({}, p.subInfo.receipt); p.rcFile = p.subFile; }
+    if (p.subFile && p.subInfo && !p.subInfo.receipt && !p.rc) {
+      planIssue(p, 'warn', 'อ่านใบเสร็จ', p.subFile, p.subInfo.hasText
+        ? 'ไฟล์นี้ไม่มีหน้าใบเสร็จ (มีเฉพาะแบบที่ยื่น) — ถ้ามียอดชำระ ต้องบันทึกชำระเงินเอง'
+        : 'PDF เป็นภาพสแกน อ่านใบเสร็จไม่ได้ — ถ้ามียอดชำระ ต้องบันทึกวันที่ชำระเอง');
+    }
+    const rc = p.rc;
+    if (rc) {
+      const exTax = taxDigits(p.E.taxId);
+      if (rc.taxId && exTax.length === 13 && rc.taxId !== exTax) {
+        planIssue(p, 'error', 'ตรวจใบเสร็จ', p.rcFile, `เลขภาษีในใบเสร็จ (${rc.taxId}) ไม่ตรงกับไฟล์ Excel (${exTax}) — ไม่ได้ใช้ใบเสร็จนี้`);
+        p.rc = null; if (p.rcFile === p.receipt) p.receipt = null; p.rcFile = null;
+      } else {
+        if (rc.taxId && exTax.length !== 13) { p.E.taxId = rc.taxId; planIssue(p, 'warn', 'ตรวจข้อมูลบริษัท', p.rcFile, `ใช้เลขภาษีจากใบเสร็จ ${rc.taxId} แทน`); }
+        if (rc.taxYear && p.E.fyBE !== rc.taxYear) {
+          planIssue(p, 'warn', 'ตรวจข้อมูลบริษัท', p.est, `ปีสิ้นรอบบัญชีในไฟล์ Excel (${p.E.yearEnd || 'ว่าง'}) ไม่ตรงกับปีภาษีในใบเสร็จ (${rc.taxYear}) — นำเข้าเป็นปี ${rc.taxYear} ตามใบเสร็จ · ควรแก้วันที่ในไฟล์ Excel`);
+          p.E.fyBE = rc.taxYear;
+        }
+        if (rc.amount !== null && rc.amount !== undefined && Math.abs(rc.amount - Math.max(p.E.cur.netPay, 0)) > 1) {
+          planIssue(p, 'warn', 'ตรวจใบเสร็จ', p.rcFile, `ยอดชำระตามใบเสร็จ ${fmt(rc.amount)} บาท ≠ ภาษีชำระตามไฟล์ Excel ${fmt(Math.max(p.E.cur.netPay, 0))} บาท`);
+        }
+      }
+    }
+    p.existing = findCompanyForImport(p.E);
     const filed = !!(p.form || p.rfile || p.subFile);
-    p.wfStatus = filed ? ((p.receipt || p.E.cur.netPay <= 0) ? 'completed' : 'filed') : null;
+    const paid = !!(p.rc || p.receipt);
+    p.wfStatus = filed || paid ? ((paid || p.E.cur.netPay <= 0) ? 'completed' : 'filed') : null;
+    if (p.wfStatus === 'filed') planIssue(p, 'warn', 'สถานะงาน', '', `มียอดชำระ ${fmt(p.E.cur.netPay)} บาท แต่ไม่พบใบเสร็จที่อ่านได้ — ตั้งสถานะ "ยื่นแบบแล้ว · รอชำระเงิน"`);
     p.preview = previewChecksFromPlan(p);
   }
+  // โฟลเดอร์ที่ชี้ไปบริษัทเดียวกัน (เลขภาษี+ปีซ้ำ) → นำเข้าเฉพาะโฟลเดอร์แรก
+  const seen = new Map();
+  for (const p of folderPlan) {
+    if (!p.E || taxDigits(p.E.taxId).length !== 13) continue;
+    const k = taxDigits(p.E.taxId) + '|' + p.E.fyBE;
+    if (seen.has(k)) { p.dupOf = seen.get(k); planIssue(p, 'error', 'ตรวจข้อมูลบริษัท', p.est, `เลขภาษี+ปีซ้ำกับโฟลเดอร์ "${p.dupOf}" — ไม่นำเข้าโฟลเดอร์นี้ (ตรวจว่าวางไฟล์ผิดโฟลเดอร์หรือไม่)`); }
+    else seen.set(k, p.folder);
+  }
+  const ok = folderPlan.filter(p => p.E && !p.dupOf);
   const nTb = folderPlan.reduce((s, p) => s + Object.keys(p.tbParsed || {}).length, 0);
-  const nBad = folderPlan.filter(p => p.preview && p.preview.sev === 'bad').length, nWarn = folderPlan.filter(p => p.preview && p.preview.sev === 'warn').length;
-  $('folderProgress').textContent = `สแกนเสร็จ: ${folderPlan.length} โฟลเดอร์ · อ่าน Estimate ได้ ${folderPlan.filter(p => p.E).length} · งบทดลอง ${nTb} งวด · จับคู่ Submission ${folderPlan.filter(p => p.subFile).length} · ทบทวนล่วงหน้า: ต้องแก้ ${nBad} · ข้อสังเกต ${nWarn}`;
+  const nBad = ok.filter(p => p.preview && p.preview.sev === 'bad').length, nWarn = ok.filter(p => p.preview && p.preview.sev === 'warn').length;
+  $('folderProgress').textContent = `สแกนเสร็จ: ${folderPlan.length} โฟลเดอร์ · พร้อมนำเข้า ${ok.length} · ใบเสร็จอ่านได้ ${ok.filter(p => p.rc).length} · จับคู่ Submission ${folderPlan.filter(p => p.subFile).length}/${subs.length} · งบทดลอง ${nTb} งวด · ข้อผิดพลาด ${folderIssueRows().filter(x => x.lvl === 'error').length} · ทบทวนล่วงหน้า: ต้องแก้ ${nBad} · ข้อสังเกต ${nWarn}`;
   renderFolderPlan();
-  if (folderPlan.some(p => p.E)) $('btnFolderImport').style.display = '';
+  renderFolderReport();
+  if (ok.length) $('btnFolderImport').style.display = '';
+}
+function folderRcText(p) {
+  const rc = p.rc;
+  if (!rc) return p.receipt ? '✓' : ((p.subFile && p.subInfo && !p.subInfo.hasText) ? '<span class="hint">PDF ภาพ</span>' : '–');
+  const d = rc.date ? new Date(rc.date + 'T00:00').toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' }) : '';
+  return `✓${d ? ' ' + d : ''}${rc.amount !== null && rc.amount !== undefined ? `<br><span class="hint">${fmt(rc.amount)}</span>` : ''}`;
 }
 function renderFolderPlan() {
   const y = v => v ? '✓' : '–';
   const rows = folderPlan.map(p => {
     const E = p.E;
-    const st = p.wfStatus ? WF_STATUS[p.wfStatus].label : (E ? 'ร่าง (ยังไม่พบแบบที่ยื่น)' : '');
+    const st = p.dupOf ? 'ไม่นำเข้า (ซ้ำ)' : p.wfStatus ? WF_STATUS[p.wfStatus].label : (E ? 'ร่าง (ยังไม่พบแบบที่ยื่น)' : 'ไม่นำเข้า');
+    const nErr = p.issues.filter(x => x.lvl === 'error').length, nW = p.issues.filter(x => x.lvl === 'warn').length;
     return `<tr>
-      <td>${escapeHtml(p.folder)}</td>
-      <td>${E ? `<b>${escapeHtml(E.company || '-')}</b><br><span class="hint">${escapeHtml(E.taxId || '')} · ${E.boiLayout ? 'ผัง BOI · ' : ''}${escapeHtml(E.rateText || '')}</span>` : `<span style="color:var(--red)">${escapeHtml(p.err)}</span>`}</td>
+      <td>${escapeHtml(p.folder)}${nErr || nW ? `<br>${nErr ? `<span class="rv-chip rv-bad">✗ ${nErr}</span> ` : ''}${nW ? `<span class="rv-chip rv-warn">⚠ ${nW}</span>` : ''}` : ''}</td>
+      <td>${E ? `<b>${escapeHtml(E.company || '-')}</b><br><span class="hint">${escapeHtml(E.taxId || '')} · ${E.boiLayout ? 'ผัง BOI · ' : ''}${E.oldLayout ? 'ผังเก่า · ' : ''}${escapeHtml(E.rateText || '')}</span>` : `<span style="color:var(--red)">${escapeHtml(p.err)}</span>`}</td>
       <td class="amt">${E ? fmt(E.cur.tax) : ''}</td>
       <td class="amt">${E ? fmt(Math.max(E.cur.netPay, 0)) : ''}</td>
       <td style="text-align:center">${y(p.form || p.rfile || p.subFile)}</td>
-      <td style="text-align:center">${y(p.receipt)}</td>
+      <td style="text-align:center">${folderRcText(p)}</td>
       <td style="text-align:center">${y(p.estPdf)}</td>
       <td style="text-align:center">${Object.keys(p.tbParsed || {}).sort().join('/') || '–'}${p.fs ? ' · FS' : ''}${p.pnd50 && p.pnd50.length ? ' · 50' : ''}</td>
       <td>${p.preview ? (p.preview.checks.length ? `<span class="rv-chip rv-${p.preview.sev}">${p.preview.sev === 'bad' ? '✗ ต้องแก้' : '⚠ ข้อสังเกต'} ${p.preview.checks.length}</span><ul class="tdlist" style="margin:4px 0 0;padding-left:14px;font-size:.76rem;color:var(--ink-2,#3a3a3c)">${p.preview.checks.slice(0, 4).map(k => `<li>${escapeHtml(k.cat)}</li>`).join('')}${p.preview.checks.length > 4 ? `<li>…อีก ${p.preview.checks.length - 4}</li>` : ''}</ul>` : '<span class="rv-chip rv-ok">✓ ผ่าน</span>') : ''}</td>
       <td>${escapeHtml(st)}</td>
-      <td>${E ? (p.existing ? 'อัปเดตรายการเดิม' : 'เพิ่มบริษัทใหม่') : '-'}</td>
+      <td>${E && !p.dupOf ? (p.existing ? 'อัปเดตรายการเดิม' : 'เพิ่มบริษัทใหม่') : '-'}</td>
     </tr>`;
   }).join('');
   $('folderPlan').innerHTML = folderPlan.length
     ? `<table class="pl"><thead><tr><th>โฟลเดอร์</th><th>บริษัท (จากไฟล์ Estimate)</th><th class="amt">ภาษีครึ่งปี</th><th class="amt">ชำระ</th><th>แบบที่ยื่น</th><th>ใบเสร็จ</th><th>Est. PDF</th><th>งบทดลอง/FS/50</th><th>ทบทวนล่วงหน้า</th><th>สถานะที่จะตั้ง</th><th>ในระบบ</th></tr></thead><tbody>${rows}</tbody></table>`
     : '';
 }
+// รวมข้อผิดพลาด/คำเตือนทั้งหมด (จากการสแกน + การนำเข้า) เป็นแถวรายงาน
+function folderIssueRows() {
+  const rows = [];
+  folderPlan.forEach(p => p.issues.forEach(x => rows.push(Object.assign({ folder: p.folder, company: p.E ? p.E.company : '' }, x))));
+  folderExtra.forEach(x => rows.push(x));
+  if (folderImportLog) folderImportLog.issues.forEach(x => rows.push(x));
+  return rows.sort((a, b) => (a.lvl === b.lvl ? 0 : a.lvl === 'error' ? -1 : 1) || String(a.folder).localeCompare(String(b.folder), 'th'));
+}
+function renderFolderReport() {
+  const box = $('folderReport');
+  const rows = folderIssueRows();
+  const L = folderImportLog;
+  if (!folderPlan.length && !rows.length) { box.innerHTML = ''; return; }
+  const nE = rows.filter(x => x.lvl === 'error').length, nW = rows.length - nE;
+  const head = L
+    ? `<div class="hint" style="margin-bottom:6px"><b>ผลนำเข้า ${fmtDateTime(L.at)}:</b> สำเร็จ ${L.ok} บริษัท (เพิ่มใหม่ ${L.added} · อัปเดต ${L.updated}) · ไม่ได้นำเข้า ${L.failed} · แนบไฟล์ใหม่ ${L.files} ไฟล์ · ใบเสร็จ ${L.receipts} รายการ${L.saveError ? ` · <b style="color:var(--red)">${escapeHtml(L.saveError)}</b>` : ''}</div>`
+    : `<div class="hint" style="margin-bottom:6px"><b>รายงานก่อนนำเข้า:</b> รายการ ✗ ข้อผิดพลาด = ส่วนนั้นจะไม่ถูกนำเข้า (บริษัทอื่นนำเข้าได้ตามปกติ) · ⚠ คำเตือน = นำเข้าได้แต่ควรตรวจ</div>`;
+  box.innerHTML = `<details ${nE ? 'open' : ''} style="margin-top:10px"><summary style="cursor:pointer;font-weight:700">รายงานข้อผิดพลาดการนำเข้า — <span class="rv-chip rv-bad">✗ ข้อผิดพลาด ${nE}</span> <span class="rv-chip rv-warn">⚠ คำเตือน ${nW}</span></summary>
+    ${head}
+    <div class="btn-row" style="margin:4px 0 6px"><button class="btn-outline btn-sm" type="button" id="btnFolderReportXlsx">⬇ ส่งออกรายงาน (Excel)</button></div>
+    ${rows.length ? `<div style="overflow:auto; max-height:420px; border:1px solid var(--border); border-radius:8px"><table class="pl"><thead><tr><th></th><th style="text-align:left;min-width:120px">โฟลเดอร์</th><th style="text-align:left;min-width:110px">บริษัท</th><th style="text-align:left">ขั้นตอน</th><th style="text-align:left;min-width:140px">ไฟล์</th><th style="text-align:left;min-width:300px">รายละเอียด</th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td>${x.lvl === 'error' ? '<span class="rv-chip rv-bad">✗</span>' : '<span class="rv-chip rv-warn">⚠</span>'}</td><td>${escapeHtml(x.folder || '')}</td><td>${escapeHtml(x.company || '')}</td><td>${escapeHtml(x.step || '')}</td><td style="font-size:.76rem">${escapeHtml(x.file || '')}</td><td style="text-align:left">${escapeHtml(x.msg || '')}</td></tr>`).join('')}
+    </tbody></table></div>` : '<p class="hint">ไม่มีข้อผิดพลาด</p>'}</details>`;
+  $('btnFolderReportXlsx').addEventListener('click', folderReportExport);
+}
+function folderReportExport() {
+  const rows = folderIssueRows().map(x => ({ 'ระดับ': x.lvl === 'error' ? 'ข้อผิดพลาด' : 'คำเตือน', 'โฟลเดอร์': x.folder || '', 'บริษัท': x.company || '', 'ขั้นตอน': x.step || '', 'ไฟล์': x.file || '', 'รายละเอียด': x.msg || '' }));
+  const plan = folderPlan.map(p => ({ 'โฟลเดอร์': p.folder, 'บริษัท': p.E ? p.E.company : '', 'เลขภาษี': p.E ? p.E.taxId : '', 'ภาษีครึ่งปี': p.E ? p.E.cur.tax : '', 'ชำระตาม Excel': p.E ? Math.max(p.E.cur.netPay, 0) : '',
+    'วันที่ชำระ (ใบเสร็จ)': p.rc ? p.rc.date : '', 'ยอดตามใบเสร็จ': p.rc && p.rc.amount !== null ? p.rc.amount : '', 'เลขที่ใบเสร็จ': p.rc ? p.rc.receiptNo : '', 'เลขอ้างอิงยื่นแบบ': p.rc ? p.rc.refNo : '',
+    'ไฟล์ Submission': p.subFile ? p.subFile.name : '', 'สถานะ': p.dupOf ? 'ไม่นำเข้า (ซ้ำ)' : p.wfStatus ? WF_STATUS[p.wfStatus].label : (p.E ? 'ร่าง' : 'ไม่นำเข้า'),
+    'ผลนำเข้า': p.importResult || '', 'ข้อผิดพลาด': p.issues.filter(x => x.lvl === 'error').length, 'คำเตือน': p.issues.filter(x => x.lvl === 'warn').length }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'ระดับ': 'ไม่มีข้อผิดพลาด' }]), 'ข้อผิดพลาด');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(plan.length ? plan : [{ 'โฟลเดอร์': '' }]), 'รายโฟลเดอร์');
+  XLSX.writeFile(wb, `pnd51-รายงานนำเข้าโฟลเดอร์-${stamp()}.xlsx`);
+}
+// ยืนยันในหน้าเว็บ (กล่อง confirm ของเบราว์เซอร์ถูกบล็อกได้ในบางหน้าต่าง → กดแล้วเงียบ ไม่มีการนำเข้า)
+function folderAskImport() {
+  const rows = folderPlan.filter(p => p.E && !p.dupOf);
+  if (!rows.length) { toast('ไม่มีรายการที่นำเข้าได้ — สแกนโฟลเดอร์ก่อน'); return; }
+  const nNew = rows.filter(p => !p.existing).length, nUpd = rows.length - nNew, nSkip = folderPlan.length - rows.length;
+  $('folderConfirmText').innerHTML = `นำเข้า <b>${rows.length}</b> บริษัท (เพิ่มใหม่ ${nNew} · อัปเดต ${nUpd})${nSkip ? ` · ข้าม ${nSkip} โฟลเดอร์ที่มีข้อผิดพลาด` : ''} — ข้อมูลคำนวณของบริษัทที่มีอยู่แล้วจะถูกแทนด้วยไฟล์ Estimate
+    <br>สถานะงานตั้งเป็น "ยื่นแบบแล้ว/เสร็จสมบูรณ์" ตามเอกสารที่พบ (วันที่ชำระจากใบเสร็จ ถ้าอ่านได้) · รายการที่เสร็จสมบูรณ์อยู่แล้วไม่ถูกลดสถานะ
+    <br>ถ้าบริษัทใดผิดพลาด โปรแกรมจะข้ามบริษัทนั้นแล้วนำเข้ารายการอื่นต่อ และสรุปในรายงานข้อผิดพลาดด้านล่าง`;
+  $('folderConfirm').hidden = false;
+  $('folderConfirm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 async function folderImport() {
-  const rows = folderPlan.filter(p => p.E);
+  const rows = folderPlan.filter(p => p.E && !p.dupOf);
+  $('folderConfirm').hidden = true;
   if (!rows.length) return;
-  if (!confirm(`นำเข้า ${rows.length} บริษัท (เพิ่มใหม่ ${rows.filter(p => !p.existing).length} · อัปเดต ${rows.filter(p => p.existing).length}) ทับข้อมูลคำนวณเดิมของบริษัทที่มีอยู่แล้ว?\nสถานะงานจะถูกตั้งเป็น "ยื่นแบบแล้ว/เสร็จสมบูรณ์" ตามเอกสารที่พบ (รายการที่เสร็จสมบูรณ์อยู่แล้วจะไม่ถูกลดสถานะ)`)) return;
-  $('btnFolderImport').disabled = true;
-  let i = 0, added = 0, updated = 0, files = 0;
+  $('btnFolderImport').disabled = true; $('btnFolderScan').disabled = true;
+  const L = folderImportLog = { at: new Date().toISOString(), ok: 0, added: 0, updated: 0, failed: 0, files: 0, receipts: 0, saveError: '', issues: [] };
+  const logIssue = (p, lvl, step, file, msg) => L.issues.push({ lvl, folder: p.folder, company: p.E ? p.E.company : '', step, file: file ? (file.name || file) : '', msg });
+  const done = [];
+  let i = 0;
+  // ขั้นที่ 1: ข้อมูลคำนวณ + สถานะงาน — ทำบนสำเนา ถ้าผิดพลาดกลางทางไม่ทำให้ข้อมูลเดิมเสีย แล้วข้ามไปบริษัทถัดไป
   for (const p of rows) {
     i++;
-    $('folderProgress').textContent = `กำลังนำเข้า ${i}/${rows.length}: ${p.E.company || p.folder}`;
-    await new Promise(r => setTimeout(r, 0));
-    let c = findCompanyByTax(p.E.taxId, p.E.fyBE);
-    if (c) updated++;
-    else {
-      // ใช้รายการว่าง (ยังไม่ตั้งชื่อ ไม่มีประวัติ) ที่โปรแกรมสร้างไว้ตอนเปิดครั้งแรกก่อน ไม่ให้เหลือรายการเปล่าค้าง
-      c = db.companies.find(x => !(x.name || '').trim() && !(x.history || []).length && !(x.tb && (x.tb.A || x.tb.B || x.tb.C)));
-      if (!c) { c = newCompany(); db.companies.push(c); }
-      added++;
+    if (i % 5 === 1) { $('folderProgress').textContent = `กำลังนำเข้าข้อมูล ${i}/${rows.length}: ${p.E.company || p.folder}`; await yieldUI(); }
+    try {
+      const orig = findCompanyForImport(p.E);
+      let c;
+      if (orig) c = JSON.parse(JSON.stringify(orig));
+      else {
+        // ใช้รายการว่าง (ยังไม่ตั้งชื่อ ไม่มีประวัติ) ที่โปรแกรมสร้างไว้ตอนเปิดครั้งแรกก่อน ไม่ให้เหลือรายการเปล่าค้าง
+        const blank = db.companies.find(x => !(x.name || '').trim() && !(x.history || []).length && !(x.tb && (x.tb.A || x.tb.B || x.tb.C)));
+        c = blank ? JSON.parse(JSON.stringify(blank)) : newCompany();
+      }
+      const empBefore = db.employees.length;
+      applyEstimateToCompany(c, p.E, p.est.name);
+      if (!c.jobCode) c.jobCode = p.code;
+      Object.keys(p.tbParsed || {}).forEach(k => {
+        const clean = Object.assign({}, p.tbParsed[k]); delete clean._lm; delete clean._file;
+        c.tb[k] = clean;                                  // งบทดลองจริงแทนงบ 4 บรรทัดจากไฟล์ Estimate
+        if (k === 'B' && clean.whtTotal && !(c.est.wht || '').trim()) c.est.wht = fmt(clean.whtTotal);
+        if (k === 'A' && clean.whtTotal && !(c.priorYearTax.wht > 0)) c.priorYearTax.wht = clean.whtTotal;
+      });
+      const wf = ensureWorkflow(c);
+      const at = new Date().toISOString();
+      const dOf = f => new Date(f.lastModified).toISOString().slice(0, 10);
+      const rc = p.rc;
+      wf.snapshot = { netPay: p.E.cur.netPay, tax: p.E.cur.tax, taxableProfit: p.E.cur.taxableAfterLoss, half: p.E.cur.half,
+                      revenue: p.E.round.revenue, expense: p.E.round.revenue - p.E.round.net, year: c.year, entityType: c.entityType, at, source: 'folder-import' };
+      if (p.wfStatus && wf.status !== 'completed') {
+        const ff = p.form || p.rfile || p.subFile || p.rcFile || p.receipt;
+        const fdate = (rc && rc.date) || dOf(ff);
+        if (!wf.filing || wf.filing.source === 'folder-import') wf.filing = { date: fdate, by: 'นำเข้าจากโฟลเดอร์', at, fileName: ff.name, refNo: rc ? rc.refNo : '', source: 'folder-import' };
+        if (p.wfStatus === 'completed' && (rc || p.receipt) && (!wf.payment || wf.payment.source === 'folder-import')) {
+          const rf = p.rcFile || p.receipt;
+          wf.payment = { date: (rc && rc.date) || dOf(rf), by: 'นำเข้าจากโฟลเดอร์', at, fileName: rf.name, receiptNo: rc ? rc.receiptNo : '', refNo: rc ? rc.refNo : '',
+                         amount: rc && rc.amount !== null && rc.amount !== undefined ? rc.amount : null, source: 'folder-import' };
+        }
+        wf.status = p.wfStatus; wf.returned = false;
+        wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `นำเข้าย้อนหลังจากโฟลเดอร์ ${p.folder} → ${WF_STATUS[p.wfStatus].label}${rc && rc.date ? ` · ใบเสร็จ ${rc.receiptNo || ''} ชำระ ${rc.date} จำนวน ${fmt(rc.amount || 0)} บาท` : ' (วันที่ยื่น/ชำระอ้างอิงจากวันที่ไฟล์)'}` });
+      } else if (wf.status === 'completed' && rc && rc.date && (!wf.payment || (wf.payment.source === 'folder-import' && !wf.payment.receiptNo))) {
+        const rf = p.rcFile || p.receipt;
+        wf.payment = { date: rc.date, by: 'นำเข้าจากโฟลเดอร์', at, fileName: rf ? rf.name : '', receiptNo: rc.receiptNo, refNo: rc.refNo, amount: rc.amount, source: 'folder-import' };
+        wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `เติมข้อมูลใบเสร็จจากโฟลเดอร์ ${p.folder}: ${rc.receiptNo || ''} ชำระ ${rc.date} จำนวน ${fmt(rc.amount || 0)} บาท` });
+      } else if (!p.wfStatus) {
+        wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `นำเข้าข้อมูลคำนวณจากโฟลเดอร์ ${p.folder} (ยังไม่พบแบบที่ยื่น)` });
+      }
+      // สำเร็จ → เขียนกลับฐานข้อมูลจริง
+      const idx = db.companies.findIndex(x => x.id === c.id);
+      if (idx >= 0) db.companies[idx] = c; else db.companies.push(c);
+      if (db.deletedIds.includes(c.id)) db.deletedIds = db.deletedIds.filter(x => x !== c.id);
+      if (orig) L.updated++; else L.added++;
+      if (rc && rc.date) L.receipts++;
+      L.ok++; p.importResult = orig ? 'อัปเดต' : 'เพิ่มใหม่';
+      done.push({ p, c });
+      if (db.employees.length !== empBefore) db.employees = db.employees.filter(e => e && typeof e.name === 'string' && e.name.trim());
+    } catch (e) {
+      L.failed++; p.importResult = 'ผิดพลาด — ไม่ได้นำเข้า';
+      logIssue(p, 'error', 'นำเข้าข้อมูลคำนวณ', p.est, 'นำเข้าไม่สำเร็จ ข้ามบริษัทนี้: ' + (e.message || e));
     }
-    if (db.deletedIds.includes(c.id)) db.deletedIds = db.deletedIds.filter(x => x !== c.id);
-    applyEstimateToCompany(c, p.E, p.est.name);
-    if (!c.jobCode) c.jobCode = p.code;
+  }
+  L.failed += folderPlan.length - rows.length;
+  try { db.employees.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'th')); } catch (e) { /* ไม่เป็นไร */ }
+  try {
+    saveDB();
+    const stored = safeStore.get();
+    if (!stored || stored.length !== JSON.stringify(db).length) L.saveError = 'บันทึกลงเครื่องไม่ครบ (พื้นที่เก็บข้อมูลของเบราว์เซอร์อาจเต็ม) — ข้อมูลอยู่ในหน้านี้จนกว่าจะปิด ให้กด "ส่งออก Excel" สำรองไว้';
+  } catch (e) { L.saveError = 'บันทึกข้อมูลไม่สำเร็จ: ' + (e.message || e); }
+  // ขั้นที่ 2: เอกสารแนบ (เก็บในเครื่อง) — ไฟล์ที่แนบไม่ได้รายงานเป็นคำเตือน ไม่กระทบข้อมูลที่นำเข้าแล้ว
+  let j = 0;
+  for (const { p, c } of done) {
+    j++;
+    if (j % 3 === 1) { $('folderProgress').textContent = `กำลังแนบไฟล์ ${j}/${done.length}: ${p.E.company || p.folder}`; await yieldUI(); }
     const saves = [];
     if (p.est) saves.push([p.est, 'tb', 'Estimate PND.51 (Excel สำนักงาน)']);
     if (p.estPdf) saves.push([p.estPdf, 'estpdf', 'จากโฟลเดอร์งาน']);
     if (p.form) saves.push([p.form, 'form', 'e-Filing']);
     if (p.rfile) saves.push([p.rfile, 'filing', 'จากโฟลเดอร์งาน']);
-    if (p.subFile) saves.push([p.subFile, 'filing', 'จากโฟลเดอร์ Submission']);
+    if (p.subFile) saves.push([p.subFile, p.subInfo && p.subInfo.receipt ? 'receipt' : 'filing', 'จากโฟลเดอร์ Submission (ใบเสร็จ + แบบที่ยื่น)']);
     if (p.receipt) saves.push([p.receipt, 'receipt', 'e-Filing']);
     if (p.fs) saves.push([p.fs, 'fs', 'จากโฟลเดอร์งาน']);
     (p.pnd50 || []).forEach(f => saves.push([f, 'pnd50', 'จากโฟลเดอร์งาน']));
-    Object.keys(p.tbParsed || {}).forEach(k => {
-      const parsed = p.tbParsed[k]; const f = parsed._file;
-      const clean = Object.assign({}, parsed); delete clean._lm; delete clean._file;
-      c.tb[k] = clean;                                  // งบทดลองจริงแทนงบ 4 บรรทัดจากไฟล์ Estimate
-      if (f) saves.push([f, 'tb', 'งบทดลอง งวด ' + k]);
-      if (k === 'B' && clean.whtTotal && !(c.est.wht || '').trim()) c.est.wht = fmt(clean.whtTotal);
-      if (k === 'A' && clean.whtTotal && !(c.priorYearTax.wht > 0)) c.priorYearTax.wht = clean.whtTotal;
-    });
-    for (const [f, kind, note] of saves) { try { if (await attSaveFor(c.id, f, kind, note)) files++; } catch (e) { console.warn('attach failed', f.name, e); } }
-    const wf = ensureWorkflow(c);
-    const at = new Date().toISOString();
-    const dOf = f => new Date(f.lastModified).toISOString().slice(0, 10);
-    wf.snapshot = { netPay: p.E.cur.netPay, tax: p.E.cur.tax, taxableProfit: p.E.cur.taxableAfterLoss, half: p.E.cur.half,
-                    revenue: p.E.round.revenue, expense: p.E.round.revenue - p.E.round.net, year: c.year, entityType: c.entityType, at, source: 'folder-import' };
-    if (p.wfStatus && wf.status !== 'completed') {
-      const ff = p.form || p.rfile || p.subFile;
-      wf.filing = wf.filing || { date: dOf(ff), by: 'นำเข้าจากโฟลเดอร์', at, fileName: ff.name };
-      if (p.receipt) wf.payment = wf.payment || { date: dOf(p.receipt), by: 'นำเข้าจากโฟลเดอร์', at, fileName: p.receipt.name };
-      wf.status = p.wfStatus; wf.returned = false;
-      wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `นำเข้าย้อนหลังจากโฟลเดอร์ ${p.folder} → ${WF_STATUS[p.wfStatus].label} (วันที่ยื่น/ชำระอ้างอิงจากวันที่ไฟล์)` });
-    } else if (!p.wfStatus) {
-      wf.log.push({ action: 'import-folder', name: 'ระบบ', at, note: `นำเข้าข้อมูลคำนวณจากโฟลเดอร์ ${p.folder} (ยังไม่พบแบบที่ยื่น)` });
+    Object.keys(p.tbParsed || {}).forEach(k => { const f = p.tbParsed[k]._file; if (f) saves.push([f, 'tb', 'งบทดลอง งวด ' + k]); });
+    for (const [f, kind, note] of saves) {
+      try {
+        const r = await withTimeout(attSaveFor(c.id, f, kind, note), 30000, 'แนบไฟล์');
+        if (r === 'big') logIssue(p, 'warn', 'แนบไฟล์', f, 'ไฟล์ใหญ่เกิน 15MB — ไม่ได้แนบ (ข้อมูลคำนวณนำเข้าแล้ว)');
+        else if (r) L.files++;
+      } catch (e) { logIssue(p, 'warn', 'แนบไฟล์', f, 'แนบไฟล์ไม่สำเร็จ: ' + fileErrText(e) + ' (ข้อมูลคำนวณนำเข้าแล้ว)'); }
     }
-    db.employees.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-    saveDB();
   }
-  db.activeId = rows[rows.length - 1] && findCompanyByTax(rows[rows.length - 1].E.taxId, rows[rows.length - 1].E.fyBE) ? findCompanyByTax(rows[rows.length - 1].E.taxId, rows[rows.length - 1].E.fyBE).id : db.activeId;
-  renderCompanySelect(); renderEmployeeList(); loadCompanyToForm(); renderDashSummary(); renderJobsDashboard();
-  $('btnFolderImport').disabled = false;
-  $('folderProgress').textContent = `นำเข้าเสร็จ: เพิ่ม ${added} · อัปเดต ${updated} · แนบไฟล์ใหม่ ${files} ไฟล์`;
-  toast(`นำเข้าจากโฟลเดอร์เสร็จ: เพิ่ม ${added} บริษัท อัปเดต ${updated} บริษัท แนบไฟล์ ${files} ไฟล์ — กำลังทบทวนทุกบริษัท`);
-  reviewAll();
-  const rc = $('reviewCard'); if (rc) rc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const last = done.length ? done[done.length - 1].c : null;
+  if (last) db.activeId = last.id;
+  try { renderCompanySelect(); renderEmployeeList(); loadCompanyToForm(); renderDashSummary(); renderJobsDashboard(); }
+  catch (e) { L.issues.push({ lvl: 'warn', folder: '-', company: '', step: 'แสดงผล', file: '', msg: 'นำเข้าแล้วแต่แสดงผลหน้าจอไม่ครบ ลองรีเฟรชหน้า: ' + (e.message || e) }); }
+  $('btnFolderImport').disabled = false; $('btnFolderScan').disabled = false;
+  const nErr = folderIssueRows().filter(x => x.lvl === 'error').length;
+  $('folderProgress').textContent = `นำเข้าเสร็จ: สำเร็จ ${L.ok} (เพิ่ม ${L.added} · อัปเดต ${L.updated}) · ไม่ได้นำเข้า ${L.failed} · ใบเสร็จ ${L.receipts} · แนบไฟล์ใหม่ ${L.files} ไฟล์ · ข้อผิดพลาด ${nErr} รายการ (ดูรายงานด้านล่าง)`;
+  renderFolderPlan();
+  renderFolderReport();
+  toast(`นำเข้าสำเร็จ ${L.ok} บริษัท${L.failed ? ` · ไม่ได้นำเข้า ${L.failed}` : ''}${L.saveError ? ' · ⚠ ' + L.saveError : ''} — กำลังทบทวนทุกบริษัท`);
+  try { reviewAll(); } catch (e) { console.warn('reviewAll failed', e); }
+  $('folderReport').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
-$('btnFolderScan').addEventListener('click', () => folderScan().catch(e => toast('สแกนไม่สำเร็จ: ' + (e.message || e))));
-$('btnFolderImport').addEventListener('click', () => folderImport().catch(e => { toast('นำเข้าไม่สำเร็จ: ' + (e.message || e)); $('btnFolderImport').disabled = false; }));
+$('btnFolderScan').addEventListener('click', () => folderScan().catch(e => { $('folderProgress').textContent = 'สแกนไม่สำเร็จ: ' + fileErrText(e); toast('สแกนไม่สำเร็จ: ' + fileErrText(e)); }));
+$('btnFolderImport').addEventListener('click', folderAskImport);
+$('btnFolderConfirmYes').addEventListener('click', () => folderImport().catch(e => {
+  $('btnFolderImport').disabled = false; $('btnFolderScan').disabled = false;
+  $('folderProgress').textContent = 'นำเข้าหยุดกลางทาง: ' + (e.message || e) + ' — รายการที่นำเข้าแล้วยังอยู่ ดูรายงานด้านล่าง';
+  toast('นำเข้าหยุดกลางทาง: ' + (e.message || e));
+  try { saveDB(); renderFolderReport(); } catch (x) { /* ไม่เป็นไร */ }
+}));
+$('btnFolderConfirmNo').addEventListener('click', () => { $('folderConfirm').hidden = true; });
 
 /* ---------- ตรวจเกณฑ์อัตราภาษี: ทุนชำระแล้ว ≤ 5 ล้าน และ รายได้ ≤ 30 ล้าน (สูตรเดียวกับช่องตรวจ D7 ในไฟล์ Estimate PND.51 ของสำนักงาน) ---------- */
 function rateCaseCheck() {
@@ -3669,11 +3990,15 @@ function thaiYearEndText(v) {
   return String(v || '').trim();
 }
 function parseEstimateWorkbook(wb) {
-  const name = wb.SheetNames.find(n => n.replace(/\s+/g, '').toLowerCase().startsWith('estimatepnd'));
+  const name = wb.SheetNames.find(n => n.replace(/\s+/g, '').toLowerCase().startsWith('estimatepnd'))
+    || wb.SheetNames.find(n => n.replace(/[\s.]+/g, '').toLowerCase() === 'pnd51');   // ไฟล์ผังเก่าบางไฟล์ตั้งชื่อชีต "PND51"
   if (!name) throw new Error('ไม่พบชีต "Estimate PND.51" ในไฟล์ — ต้องเป็นไฟล์ XXX_2026_Estimate PND.51.xlsx ของสำนักงาน');
   const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
   const cell = (r, c) => (aoa[r - 1] || [])[c - 1];   // อ้างแบบ Excel (แถว/คอลัมน์เริ่ม 1)
-  let hdr = 0, cP = 0, cX = 0, cE = 0, cR = 0;
+  // ไฟล์ที่สร้างจาก Excel บน Mac รุ่นเก่าใช้ระบบวันที่ 1904 — เลขลำดับวันน้อยกว่าปกติ 1,462 วัน (ถ้าไม่ปรับ วันที่จะเพี้ยนไป 4 ปี 1 วัน)
+  const d1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
+  const ser = v => (typeof v === 'number' && d1904) ? v + 1462 : v;
+  let hdr = 0, cP = 0, cX = 0, cE = 0, cR = 0, estFull = false;
   for (let r = 8; r <= 12 && !hdr; r++) {
     for (let c = 1; c <= 20; c++) {
       const v = cell(r, c);
@@ -3681,8 +4006,8 @@ function parseEstimateWorkbook(wb) {
       const t = v.trim();
       if (/^YE\s*\d{4}/i.test(t)) { hdr = r; cP = c; }
       else if (/^actual/i.test(t)) cX = c;
-      else if (/^est/i.test(t)) cE = c;
-      else if (/^round/i.test(t)) cR = c;
+      else if (/^est/i.test(t)) { if (!cE || (/full/i.test(t) && !estFull)) { cE = c; estFull = /full/i.test(t); } }   // ใช้คอลัมน์ "Est. Full" ตัวแรก (บางไฟล์มี "Estimated 1-6" หรือข้อความ est… ด้านขวาอีก)
+      else if (/^round/i.test(t) && !cR) cR = c;
     }
   }
   if (!(hdr && cP && cX && cE && cR)) {
@@ -3706,9 +4031,12 @@ function parseEstimateWorkbook(wb) {
       delete E._periods;
       return E;
     }
+    if (hdr && cP && cX && cE) return parseEstimateOld(aoa, cell, hdr, cP, cX, cE, ser, 0);
     throw new Error('ไม่พบหัวคอลัมน์ YE / Actual Half / Est. Full / Round ในชีต Estimate PND.51 — รูปแบบไฟล์ต่างจากที่โปรแกรมรู้จัก');
   }
   const rowOf = (re, dflt) => { for (let r = 1; r <= 60; r++) { const v = cell(r, 1); if (typeof v === 'string' && re.test(v.trim())) return r; } return dflt; };
+  // มีคอลัมน์ Round แต่ป้ายแถวไม่ใช่ผังมาตรฐาน (เช่น ไฟล์รอบบัญชี ก.ค.–มิ.ย. ที่ใช้ป้าย Income/Profit) → อ่านตามป้ายแถวแบบผังเก่า แทนการเดาตำแหน่งแถว
+  if (!rowOf(/^Revenue$/i, 0) || !rowOf(/^Net Profit/i, 0) || !rowOf(/^Taxable Profit/i, 0)) return parseEstimateOld(aoa, cell, hdr, cP, cX, cE, ser, cR);
   const rRev = rowOf(/^Revenue$/i, 11), rCost = rowOf(/^Less\s*:\s*Cost/i, 12), rSGA = rowOf(/SGA/i, 14),
         rInt = rowOf(/Interest/i, 16), rNP = rowOf(/^Net Profit/i, 17), rAddRev = rowOf(/Revenue \(Less/i, 19),
         rAddExp = rowOf(/Expense \(Greater/i, 20), rTaxable = rowOf(/^Taxable Profit/i, 21),
@@ -3718,7 +4046,7 @@ function parseEstimateWorkbook(wb) {
   const period = col => ({ revenue: n(cell(rRev, col)), cost: -n(cell(rCost, col)), sga: -n(cell(rSGA, col)), interest: -n(cell(rInt, col)),
     net: n(cell(rNP, col)), addRev: n(cell(rAddRev, col)), addExp: n(cell(rAddExp, col)), taxable: n(cell(rTaxable, col)) });
   const company = String(cell(1, 1) || '').trim();
-  const yearEnd = thaiYearEndText(cell(2, cR + 1));
+  const yearEnd = thaiYearEndText(ser(cell(2, cR + 1)));
   const fyBE = parseInt((/(\d{4})\s*$/.exec(yearEnd) || [])[1]) || 0;
   const toParsed = (p, periodText) => {
     if (!p.revenue && !p.cost && !p.sga && !p.interest && !p.net) return null;
@@ -3745,7 +4073,7 @@ function parseEstimateWorkbook(wb) {
   };
   const lossRows = {};
   for (let r = 36; r <= 46; r++) {
-    const yr = yearOfLabel(cell(r, 1));
+    const yr = yearOfLabel(ser(cell(r, 1)));
     if (!yr) continue;
     const remain = n(cell(r, cP)) + n(cell(r, cP + 2));
     const tick = cell(r, cP + 5) === true || String(cell(r, cP + 5)).toUpperCase() === 'TRUE';
@@ -3761,6 +4089,64 @@ function parseEstimateWorkbook(wb) {
     round,
     cur: { lossUsed: -n(cell(26, cR)), taxableAfterLoss: n(cell(27, cR)), half: n(cell(28, cR)), tax: n(cell(29, cR)), wht: -n(cell(30, cR)), netPay: n(cell(31, cR)), safeText: String(cell(29, cR + 1) || '') },
     lossCarry
+  };
+}
+/* ไฟล์ Estimate ผังเก่า (ไม่มีคอลัมน์ Round): หัวตาราง YE / Actual half / Estimated Full ที่แถว 10–11 · ป้ายแถว Income, Cost, SGA expense,
+   Interest Expense, Profit, Add back (Revenue/Expense), ขาดทุนสะสมไม่เกิน, Half Profit, CIT/Tax, W/T, PND.51, Net Paid · ต้นทุน/ค่าใช้จ่ายเป็นบวก
+   ไม่มีตารางขาดทุนสะสมรายปี → lossCarry = 0 (แจ้งให้กรอกเอง) · อ่านเลขภาษีจากแถว "User" เท่านั้น ไม่อ่านแถว "Pass" */
+function parseEstimateOld(aoa, cell, hdr, cP, cX, cE, ser, cR) {
+  ser = ser || (v => v);
+  const n = v => { if (v === null || v === undefined || v === '') return 0; const x = parseFloat(String(v).replace(/,/g, '')); return isFinite(x) ? x : 0; };
+  const lab = r => String(cell(r, 1) === null || cell(r, 1) === undefined ? '' : cell(r, 1)).trim();
+  const rowOf = (re, from, to) => { for (let r = from || 1; r <= (to || 60); r++) if (re.test(lab(r))) return r; return 0; };
+  const rowWith = (re, col, from) => { for (let r = from || 1; r <= 60; r++) { const v = cell(r, col); if (typeof v === 'string' && re.test(v.trim())) return r; } return 0; };
+  const rInc = rowOf(/^income$/i, hdr), rCost = rowOf(/^cost/i, hdr), rSga = rowOf(/^SGA|^selling/i, hdr), rInt = rowOf(/^interest/i, hdr), rProfit = rowOf(/^profit$/i, hdr);
+  const rAdd = rowOf(/^add\s*back/i, hdr), rAddRev = rowOf(/^revenue$/i, rAdd || hdr), rAddExp = rowOf(/^expense$/i, rAdd || hdr);
+  const rLoss = rowOf(/ขาดทุนสะสม/, hdr), rCIT = rowOf(/^CIT/i, hdr), rWT = rowOf(/^W\/T/i, hdr), rPnd = rowOf(/^PND\.?\s*51/i, hdr), rNet = rowOf(/^net\s*paid/i, hdr);
+  const rHalf = rowOf(/^half\s*profit/i, hdr) || rowWith(/^half\s*profit/i, cE - 1, hdr);
+  if (!rInc || !rProfit || !rHalf || !rWT) throw new Error('ไฟล์ผังเก่า: ไม่พบแถว Income / Profit / Half Profit / W/T — รูปแบบไฟล์ต่างจากที่โปรแกรมรู้จัก');
+  // คอลัมน์ตัวเลขส่วนคำนวณภาษี: ปกติอยู่ใต้ Est. Full · บางไฟล์มีคอลัมน์ Round และตัวเลขภาษีอยู่ใต้ Round (ช่อง Est. Full ว่าง)
+  const blank = v => v === null || v === undefined || v === '';
+  const cV = (!blank(cell(rHalf, cE)) || !cR) ? cE : cR;
+  const rTaxRow = rowWith(/^tax\b/i, cE - 1, hdr) || rCIT;
+  const rWTcur = rowWith(/^W\/T/i, cE - 1, hdr) || rWT;
+  const rTaxBefore = rAddExp ? rAddExp + 1 : 0, rTaxAfter = rLoss ? rLoss + 1 : rTaxBefore;
+  const period = col => {
+    const revenue = n(cell(rInc, col)), cost = rCost ? Math.abs(n(cell(rCost, col))) : 0, sga = rSga ? Math.abs(n(cell(rSga, col))) : 0, interest = rInt ? Math.abs(n(cell(rInt, col))) : 0;
+    const net = n(cell(rProfit, col)), addRev = rAddRev ? n(cell(rAddRev, col)) : 0, addExp = rAddExp ? n(cell(rAddExp, col)) : 0;
+    return { revenue, cost, sga, interest, net, addRev, addExp, taxable: rTaxBefore ? n(cell(rTaxBefore, col)) : net + addExp + addRev };
+  };
+  const findLabelValue = re => { for (let r = 1; r <= Math.max(hdr - 1, 1); r++) for (let c = 1; c <= 12; c++) { const v = cell(r, c); if (typeof v === 'string' && re.test(v.trim())) return cell(r, c + 1); } return null; };
+  const company = String(cell(1, 1) || '').trim();
+  const yearEnd = thaiYearEndText(ser(findLabelValue(/^period\s*:?$/i)));
+  const fyBE = parseInt((/(\d{4})\s*$/.exec(yearEnd) || [])[1]) || 0;
+  const rateText = String(findLabelValue(/^อัตราภาษี/) || '').trim();
+  const entityType = /20\s*%|ทั่วไป/.test(rateText) ? 'general' : (/SME|ขั้นบันได/i.test(rateText) ? 'sme' : '');
+  const toParsed = (p, periodText) => {
+    if (!p.revenue && !p.cost && !p.sga && !p.interest && !p.net) return null;
+    const accounts = [
+      { code: '4', name: 'รายได้รวม (จากไฟล์ Estimate ผังเก่า)', group: 'revenue', amount: p.revenue },
+      { code: '51', name: 'ต้นทุนขาย/บริการ (จากไฟล์ Estimate ผังเก่า)', group: 'cost', amount: p.cost },
+      { code: '52', name: 'ค่าใช้จ่ายขายและบริหาร (จากไฟล์ Estimate ผังเก่า)', group: 'sga', amount: p.sga },
+      { code: '58', name: 'ดอกเบี้ยจ่าย (จากไฟล์ Estimate ผังเก่า)', group: 'interest', amount: p.interest }
+    ].filter(a => a.amount);
+    const totals = { revenue: p.revenue, cost: p.cost, sga: p.sga, interest: p.interest, tax: 0 };
+    const grossMargin = totals.revenue - totals.cost, ebit = grossMargin - totals.sga;
+    return { company, period: periodText, accounts, totals, grossMargin, ebit, netProfit: ebit - totals.interest, whtTotal: 0, fromEstimate: true };
+  };
+  const prior = period(cP), actual = period(cX), est = period(cE), cur = period(cV);
+  const taxableBefore = cur.taxable;
+  const lossCur = rLoss ? Math.min(Math.max(-n(cell(rLoss, cV)), 0), Math.max(taxableBefore, 0)) : 0;
+  const priorLoss = rLoss ? Math.min(Math.max(-n(cell(rLoss, cP)), 0), Math.max(prior.taxable, 0)) : 0;
+  const wht = -n(cell(rWTcur, cV)), tax = n(cell(rTaxRow, cV));
+  return {
+    company, taxId: excelTaxIdText(findLabelValue(/^user\s*:?$/i)), capital: n(findLabelValue(/^ทุน/)), rateText, entityType, yearEnd, fyBE,
+    jobCode: '', preparer: '', reviewer: '', approver: '', oldLayout: true,
+    tbA: toParsed(prior, `ปีก่อน ${String(cell(hdr, cP) || '')}`), tbB: toParsed(actual, String(cell(hdr, cX) || 'ครึ่งปีแรก')), tbC: toParsed(est, String(cell(hdr, cE) || 'ประมาณการทั้งปี')),
+    prior: { net: prior.net, addBack: prior.addExp, exempt: -prior.addRev, lossUsed: priorLoss, cit: rCIT ? n(cell(rCIT, cP)) : 0, wht: -n(cell(rWT, cP)), pnd51: rPnd ? -n(cell(rPnd, cP)) : 0, payable: rNet ? n(cell(rNet, cP)) : 0 },
+    round: cur,
+    cur: { lossUsed: lossCur, taxableAfterLoss: rTaxAfter ? n(cell(rTaxAfter, cV)) : taxableBefore - lossCur, half: n(cell(rHalf, cV)), tax, wht, netPay: tax - wht, safeText: '' },
+    lossCarry: [0, 0, 0, 0, 0]
   };
 }
 function applyEstimateToCompany(c, E, fileName) {
