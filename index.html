@@ -307,6 +307,8 @@
   #printOverlay .po-hint { background: var(--amber-light); color: #6e4a12; border-radius: 8px;
     padding: 8px 14px; font-size: .82rem; }
   #printOverlay .po-paper, #attOverlay .po-paper { flex: 1; background: #fff; border-radius: 10px; overflow: auto; padding: 10px; }
+  #attOverlay table.att-sheet td { white-space: nowrap; text-align: left; font-size: .8rem; border: 1px solid var(--border); padding: 2px 6px; }
+  #attSheetTabs button.on { background: var(--blue); color: #fff; }
   #printOverlay iframe, #attOverlay iframe { width: 100%; height: 100%; min-height: 60vh; border: 1px solid var(--border); background: #fff; }
 
   /* PND.51 summary front page */
@@ -1304,6 +1306,78 @@ function stamp() {
   const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }
+/* ---------- ส่งไฟล์ลงเครื่อง (รอบ 27) ----------
+   เบราว์เซอร์ในแอป Claude และหน้า artifact บล็อกการดาวน์โหลดแบบเงียบ ๆ (กดแล้วไม่มีไฟล์ ไม่มี error)
+   → ทุกปุ่มส่งออก/ดาวน์โหลดผ่าน deliverFile: หน้า artifact ใช้ระบบบันทึกไฟล์ของ Claude (ถ้าชนิดไฟล์อนุญาต)
+   · ที่อื่นดาวน์โหลดตามปกติ แล้วแสดงแถบ "ถ้าไฟล์ไม่ลงเครื่อง" พร้อมลิงก์ดาวน์โหลดซ้ำและคำแนะนำให้เปิดใน Chrome/Safari/Edge */
+const SITE_URL = 'https://apichartexpert.github.io/bbt-pnd51/';
+const IN_CLAUDE_APP = /\bClaude\/\d/.test(navigator.userAgent);
+const IN_ARTIFACT = !!(window.claude && typeof window.claude.use === 'function');
+const IN_FRAME = (() => { try { return window.top !== window; } catch (e) { return true; } })();
+const DL_BLOCKED_HINT = IN_CLAUDE_APP ? 'หน้าต่างนี้เป็นเบราว์เซอร์ในแอป Claude ซึ่งไม่บันทึกไฟล์ดาวน์โหลด'
+  : (IN_ARTIFACT || IN_FRAME) ? 'หน้านี้เปิดผ่านหน้า artifact/กรอบของเว็บอื่น ซึ่งบล็อกการดาวน์โหลดบางชนิด' : '';
+function copySiteLink() {
+  const done = () => toast('คัดลอกลิงก์เว็บแล้ว — วางในแถบที่อยู่ของ Chrome / Safari / Edge');
+  try { navigator.clipboard.writeText(SITE_URL).then(done, () => prompt('คัดลอกลิงก์นี้ไปเปิดใน Chrome / Safari / Edge', SITE_URL)); }
+  catch (e) { prompt('คัดลอกลิงก์นี้ไปเปิดใน Chrome / Safari / Edge', SITE_URL); }
+}
+window.copySiteLink = copySiteLink;
+let dlBarUrl = null;
+function showDownloadBar(url, filename, size) {
+  let bar = document.getElementById('dlBar');
+  if (bar) bar.remove();
+  if (dlBarUrl && dlBarUrl !== url) { try { URL.revokeObjectURL(dlBarUrl); } catch (e) { /* ไม่เป็นไร */ } }
+  dlBarUrl = url;
+  bar = document.createElement('div');
+  bar.id = 'dlBar';
+  bar.className = 'screen-only';
+  bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:10000;background:#fff;border:1px solid var(--blue);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:10px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.86rem';
+  bar.innerHTML = `<span style="flex:1;min-width:220px">⬇ <b>${escapeHtml(filename)}</b> <span class="hint">(${fmtSize(size)})</span><br>`
+    + (DL_BLOCKED_HINT
+      ? `<span style="color:var(--red)">${DL_BLOCKED_HINT} — ถ้าไม่มีไฟล์ในโฟลเดอร์ Downloads ให้เปิดเว็บใน Chrome / Safari / Edge (ข้อมูลในเครื่องแยกตามเบราว์เซอร์ ต้องนำเข้าใหม่หรือล็อกอินระบบกลาง)</span>`
+      : `<span class="hint">ถ้าไฟล์ไม่ลงโฟลเดอร์ Downloads กด "ดาวน์โหลดอีกครั้ง" (บางเบราว์เซอร์ถามอนุญาตก่อน)</span>`)
+    + `</span><a class="btn-primary btn-sm" href="${url}" download="${escapeHtml(filename)}" style="text-decoration:none">⬇ ดาวน์โหลดอีกครั้ง</a>`
+    + (DL_BLOCKED_HINT ? `<button class="btn-outline btn-sm" type="button" onclick="copySiteLink()">🔗 คัดลอกลิงก์เว็บ</button>` : '')
+    + `<button class="btn-outline btn-sm" type="button" id="dlBarClose">✕</button>`;
+  document.body.appendChild(bar);
+  document.getElementById('dlBarClose').onclick = () => { bar.remove(); };
+}
+async function deliverFile(blob, filename, okMsg) {
+  if (IN_ARTIFACT) {
+    try {
+      const dl = await window.claude.use('downloads');
+      if (dl) { await dl.save({ filename, data: blob }); if (okMsg) toast(okMsg); return true; }
+    } catch (e) {
+      if (e && e.code === 'declined') { toast('ยกเลิกการบันทึกไฟล์'); return false; }
+      if (e && e.code === 'rate_limited') { toast('มีหน้าต่างบันทึกไฟล์ค้างอยู่ — ตอบหน้าต่างนั้นก่อน'); return false; }
+      /* ชนิดไฟล์ (เช่น .xlsx) ไม่อยู่ในรายการที่หน้า artifact อนุญาต → ลองวิธีปกติด้านล่าง + แสดงคำแนะนำ */
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { /* แถบด้านล่างมีลิงก์ให้กดเอง */ }
+  showDownloadBar(url, filename, blob.size);
+  if (okMsg) toast(okMsg);
+  return true;
+}
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+function xlsxDownload(wb, filename, okMsg) {
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return deliverFile(new Blob([out], { type: XLSX_MIME }), filename, okMsg);
+}
+function showEnvWarning() {
+  if (!IN_CLAUDE_APP || document.getElementById('envWarn')) return;
+  const w = document.createElement('div');
+  w.id = 'envWarn'; w.className = 'screen-only';
+  w.style.cssText = 'background:var(--amber-light);color:#6e4a12;padding:8px 14px;font-size:.85rem;display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+  w.innerHTML = '<span style="flex:1;min-width:220px">⚠ เปิดอยู่ในเบราว์เซอร์ของแอป Claude — <b>ดาวน์โหลดไฟล์ / ส่งออก Excel จะไม่ลงเครื่อง</b> · ใช้งานจริงให้เปิดเว็บใน Chrome / Safari / Edge</span>'
+    + '<button class="btn-outline btn-sm" type="button" onclick="copySiteLink()">🔗 คัดลอกลิงก์เว็บ</button>'
+    + '<button class="btn-outline btn-sm" type="button" onclick="this.parentNode.remove()">✕</button>';
+  document.body.insertBefore(w, document.body.firstChild);
+}
 // สร้างสมุด Excel: ชีต Companies (คอลัมน์อ่านง่าย + คอลัมน์ _json เก็บข้อมูลเต็มสำหรับนำเข้ากลับแบบไม่ตกหล่น) + ชีต Employees
 function companiesToWorkbook(companies, employees) {
   const wb = XLSX.utils.book_new();
@@ -1338,15 +1412,13 @@ function companiesToWorkbook(companies, employees) {
 }
 $('btnExport').addEventListener('click', () => {
   saveCompanyFromForm();
-  XLSX.writeFile(companiesToWorkbook(db.companies, db.employees), `pnd51-ข้อมูลทั้งหมด-${stamp()}.xlsx`);
-  toast('ส่งออกข้อมูลทั้งหมดเป็นไฟล์ Excel แล้ว');
+  xlsxDownload(companiesToWorkbook(db.companies, db.employees), `pnd51-ข้อมูลทั้งหมด-${stamp()}.xlsx`, 'ส่งออกข้อมูลทั้งหมดเป็นไฟล์ Excel แล้ว');
 });
 function exportCompany() {
   saveCompanyFromForm();
   const c = activeCompany();
-  XLSX.writeFile(companiesToWorkbook([c], db.employees),
-    `pnd51-${(c.name || 'บริษัท').replace(/[\\/:*?"<>|]/g, '')}-${stamp()}.xlsx`);
-  toast('ส่งออกบริษัทนี้เป็นไฟล์ Excel แล้ว — ส่งให้ผู้ตรวจ/อนุมัติเพื่อนำเข้าและ Sign-off');
+  xlsxDownload(companiesToWorkbook([c], db.employees),
+    `pnd51-${(c.name || 'บริษัท').replace(/[\\/:*?"<>|]/g, '')}-${stamp()}.xlsx`, 'ส่งออกบริษัทนี้เป็นไฟล์ Excel แล้ว — ส่งให้ผู้ตรวจ/อนุมัติเพื่อนำเข้าและ Sign-off');
 }
 window.exportCompany = exportCompany;
 $('btnExportOne').addEventListener('click', exportCompany);
@@ -1355,8 +1427,7 @@ $('btnExportEmp').addEventListener('click', () => {
   const wb = XLSX.utils.book_new();
   const erows = db.employees.map(e => ({ 'ชื่อ': e.name || '', 'ตำแหน่ง': e.role || '', 'บทบาท': e.rtype || '' }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(erows.length ? erows : [{ 'ชื่อ': '' }]), 'Employees');
-  XLSX.writeFile(wb, `pnd51-พนักงาน-${stamp()}.xlsx`);
-  toast('ส่งออกฐานข้อมูลพนักงานเป็นไฟล์ Excel แล้ว');
+  xlsxDownload(wb, `pnd51-พนักงาน-${stamp()}.xlsx`, 'ส่งออกฐานข้อมูลพนักงานเป็นไฟล์ Excel แล้ว');
 });
 $('btnImportEmp').addEventListener('click', () => $('importData').click());
 
@@ -1603,37 +1674,82 @@ async function attSaveTb(file, slot) {
     await refreshAttachments();
   } catch (e) {}
 }
-window.attPreview = function (id) {
+// ชนิดไฟล์จากนามสกุล (ไฟล์ที่นำเข้าจากโฟลเดอร์บางไฟล์ไม่มีชนิดติดมา → เดิมกด "ดู" แล้วกลายเป็นดาวน์โหลด ซึ่งบางหน้าต่างบล็อก)
+function mimeFromName(name) {
+  const ext = (/\.([a-z0-9]+)$/i.exec(name || '') || [])[1];
+  return ({ pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    txt: 'text/plain', csv: 'text/csv', htm: 'text/html', html: 'text/html', xlsx: XLSX_MIME, xls: 'application/vnd.ms-excel', xlsm: XLSX_MIME })[(ext || '').toLowerCase()] || '';
+}
+window.attPreview = async function (id) {
   const a = attCache.find(x => x.id === id);
   if (!a) return;
-  const t = (a.type || '').toLowerCase();
-  const canFrame = t.includes('pdf') || t.startsWith('image/') || t.startsWith('text/');
-  const url = URL.createObjectURL(a.blob);
-  const download = () => {
-    const dl = document.createElement('a');
-    dl.href = url; dl.download = a.name;
-    document.body.appendChild(dl); dl.click(); document.body.removeChild(dl);
-  };
-  if (!canFrame) {
-    // Excel และไฟล์อื่นเปิดตัวอย่างในเบราว์เซอร์ไม่ได้ — ดาวน์โหลดให้เปิดด้วยโปรแกรมในเครื่อง
-    download();
-    toast('ไฟล์ชนิดนี้แสดงตัวอย่างในเบราว์เซอร์ไม่ได้ — ดาวน์โหลดให้แล้ว เปิดด้วย Excel/โปรแกรมที่เกี่ยวข้อง');
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
-    return;
-  }
+  if (!a.blob || !a.blob.size) { toast('ไม่พบเนื้อไฟล์ในเครื่องนี้ — เอกสารแนบเก็บเฉพาะเครื่อง/เบราว์เซอร์ที่แนบไว้ (ไม่ซิงค์)'); return; }
+  const t = ((a.type || '').toLowerCase() || mimeFromName(a.name)).toLowerCase();
+  const isSheet = /spreadsheet|ms-excel|text\/csv/.test(t) || /\.(xlsx|xlsm|xls|csv)$/i.test(a.name || '');
+  const canFrame = t.includes('pdf') || t.startsWith('image/') || t === 'text/plain';
+  const download = () => deliverFile(a.blob, a.name);
   let ov = document.getElementById('attOverlay');
   if (ov) ov.remove();
   ov = document.createElement('div');
   ov.id = 'attOverlay';
-  ov.innerHTML = '<div class="po-bar"><span class="po-title">👁 ' + escapeHtml(a.name) + '</span><span class="po-spacer"></span>'
+  const bar = '<div class="po-bar"><span class="po-title">👁 ' + escapeHtml(a.name) + ' <span class="hint" style="font-weight:400">· ' + fmtSize(a.size || a.blob.size) + '</span></span><span class="po-spacer"></span>'
     + '<button class="btn-outline btn-sm" id="attDl" type="button">⬇ ดาวน์โหลด</button>'
-    + '<button class="btn-outline btn-sm" id="attClose" type="button">✕ ปิด</button></div>'
-    + '<div class="po-paper">' + (t.startsWith('image/')
-        ? '<div style="text-align:center; padding:10px"><img src="' + url + '" style="max-width:100%"></div>'
-        : '<iframe src="' + url + '" title="attachment-preview"></iframe>') + '</div>';
+    + '<button class="btn-outline btn-sm" id="attClose" type="button">✕ ปิด</button></div>';
+  let url = null;
+  const close = () => { ov.remove(); if (url) setTimeout(() => URL.revokeObjectURL(url), 1000); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  if (isSheet) {
+    // Excel: แสดงเป็นตารางในหน้า (ไม่ต้องดาวน์โหลด) — แสดงไม่เกิน 300 แถว × 30 คอลัมน์ต่อชีต
+    ov.innerHTML = bar + '<div class="po-paper"><div class="hint" id="attSheetTabs" style="margin-bottom:6px">กำลังอ่านไฟล์…</div><div id="attSheet" style="overflow:auto"></div></div>';
+    document.body.appendChild(ov);
+    document.getElementById('attClose').onclick = close; document.getElementById('attDl').onclick = download; document.addEventListener('keydown', onKey);
+    try {
+      const f = a.blob instanceof File ? a.blob : new File([a.blob], a.name || 'file.xlsx');
+      const wb = await readWorkbookFile(f);
+      const show = name => {
+        const ws = wb.Sheets[name];
+        let html = '<p class="hint">ชีตว่าง</p>', note = '';
+        if (ws && ws['!ref']) {
+          const rg = XLSX.utils.decode_range(ws['!ref']);
+          const full = XLSX.utils.encode_range(rg);
+          if (rg.e.r - rg.s.r > 299 || rg.e.c - rg.s.c > 29) {
+            note = `<p class="hint">แสดง 300 แถว × 30 คอลัมน์แรก (ทั้งชีต ${rg.e.r - rg.s.r + 1} แถว × ${rg.e.c - rg.s.c + 1} คอลัมน์) — ดูทั้งหมดให้ดาวน์โหลดเปิดด้วย Excel</p>`;
+            rg.e.r = Math.min(rg.e.r, rg.s.r + 299); rg.e.c = Math.min(rg.e.c, rg.s.c + 29);
+          }
+          ws['!ref'] = XLSX.utils.encode_range(rg);
+          html = XLSX.utils.sheet_to_html(ws, { header: '', footer: '' });
+          ws['!ref'] = full;
+        }
+        const box = document.getElementById('attSheet');
+        box.innerHTML = note + html.replace(/<table/, '<table class="pl att-sheet"');
+        document.querySelectorAll('#attSheetTabs button').forEach(bt => bt.classList.toggle('on', bt.dataset.s === name));
+      };
+      document.getElementById('attSheetTabs').innerHTML = 'ชีต: ' + wb.SheetNames.map(n => `<button type="button" class="btn-outline btn-sm" data-s="${escapeHtml(n)}" style="margin:2px">${escapeHtml(n)}</button>`).join('');
+      document.querySelectorAll('#attSheetTabs button').forEach(bt => bt.addEventListener('click', () => show(bt.dataset.s)));
+      const first = wb.SheetNames.find(n => /estimate\s*pnd|^pnd\s*\.?51$/i.test(n.trim())) || wb.SheetNames[0];
+      if (first) show(first);
+    } catch (e) {
+      document.getElementById('attSheetTabs').textContent = 'แสดงไฟล์นี้ในหน้าไม่ได้: ' + ((e && e.message) || e) + ' — กด "ดาวน์โหลด" แล้วเปิดด้วย Excel';
+    }
+    return;
+  }
+  if (!canFrame) {
+    ov.innerHTML = bar + '<div class="po-paper"><p class="note">ไฟล์ชนิดนี้แสดงตัวอย่างในเบราว์เซอร์ไม่ได้ — กด "⬇ ดาวน์โหลด" แล้วเปิดด้วยโปรแกรมในเครื่อง</p></div>';
+    document.body.appendChild(ov);
+    document.getElementById('attClose').onclick = close; document.getElementById('attDl').onclick = download; document.addEventListener('keydown', onKey);
+    return;
+  }
+  const blob = (a.blob.type || '').toLowerCase() === t ? a.blob : new Blob([a.blob], { type: t });   // PDF ต้องมีชนิด application/pdf ไม่งั้นกรอบแสดงผลไม่เปิด
+  url = URL.createObjectURL(blob);
+  ov.innerHTML = bar + '<div class="po-paper">' + (t.startsWith('image/')
+      ? '<div style="text-align:center; padding:10px"><img src="' + url + '" style="max-width:100%"></div>'
+      : '<iframe src="' + url + '" title="attachment-preview"></iframe>')
+    + ((IN_ARTIFACT || IN_FRAME) && t.includes('pdf') ? '<p class="hint" style="margin:6px 4px 0">ถ้าไม่เห็นเอกสาร (หน้านี้บล็อกการแสดง PDF) ให้เปิดเว็บใน Chrome / Safari / Edge</p>' : '')
+    + '</div>';
   document.body.appendChild(ov);
-  document.getElementById('attClose').onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
+  document.getElementById('attClose').onclick = close;
   document.getElementById('attDl').onclick = download;
+  document.addEventListener('keydown', onKey);
 };
 
 /* ---------- Workflow / Sign-off ---------- */
@@ -2355,12 +2471,7 @@ function makePrintDoc(autoPrint) {
 }
 function downloadPrintFile() {
   const doc = makePrintDoc(true);
-  const blob = new Blob([doc], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `สรุป-ภงด51-${stamp()}.html`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  deliverFile(new Blob([doc], { type: 'text/html' }), `สรุป-ภงด51-${stamp()}.html`);
   toast('ดาวน์โหลดไฟล์สรุปแล้ว — เปิดไฟล์ที่ดาวน์โหลด หน้าต่างพิมพ์จะขึ้นเอง (หรือกด Ctrl/Cmd+P)');
 }
 // พิมพ์ตรง ๆ (เปิดแท็บใหม่) — ใช้ได้บนเว็บไซต์จริง; ถ้าถูกบล็อกจะคืน false
@@ -3275,8 +3386,7 @@ function reviewExport() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'บริษัท': '' }]), 'รายบริษัท');
   const items = []; reviewRows.forEach(x => x.checks.forEach(k => items.push({ 'ประเภท': k.st === 'bad' ? 'ต้องแก้' : 'ข้อสังเกต', 'หมวด': k.cat, 'บริษัท': x.name, 'รายละเอียด': k.detail })));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(items.length ? items : [{ 'หมวด': '' }]), 'ประเด็นรายรายการ');
-  XLSX.writeFile(wb, `pnd51-ทบทวนการคำนวณ-${stamp()}.xlsx`);
-  toast('ส่งออกผลทบทวนเป็นไฟล์ Excel แล้ว');
+  xlsxDownload(wb, `pnd51-ทบทวนการคำนวณ-${stamp()}.xlsx`, 'ส่งออกผลทบทวนเป็นไฟล์ Excel แล้ว');
 }
 $('btnReviewAll').addEventListener('click', () => { saveCompanyFromForm(); reviewAll(); });
 $('btnReviewExport').addEventListener('click', reviewExport);
@@ -3678,7 +3788,7 @@ function folderReportExport() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'ระดับ': 'ไม่มีข้อผิดพลาด' }]), 'ข้อผิดพลาด');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(plan.length ? plan : [{ 'โฟลเดอร์': '' }]), 'รายโฟลเดอร์');
-  XLSX.writeFile(wb, `pnd51-รายงานนำเข้าโฟลเดอร์-${stamp()}.xlsx`);
+  xlsxDownload(wb, `pnd51-รายงานนำเข้าโฟลเดอร์-${stamp()}.xlsx`, 'ส่งออกรายงานนำเข้าเป็นไฟล์ Excel แล้ว');
 }
 // ยืนยันในหน้าเว็บ (กล่อง confirm ของเบราว์เซอร์ถูกบล็อกได้ในบางหน้าต่าง → กดแล้วเงียบ ไม่มีการนำเข้า)
 function folderAskImport() {
@@ -4892,6 +5002,7 @@ loadCompanyToForm();
 renderEmployeeList();
 cloudInit();
 renderWizard();
+try { showEnvWarning(); } catch (e) { /* ไม่เป็นไร */ }
 </script>
 </body>
 </html>
