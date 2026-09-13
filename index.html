@@ -231,6 +231,23 @@
   .alert.danger { background: var(--red-light); border: 1.5px solid var(--red); color: #7c241a; }
   .alert.ok { background: var(--green-light); border: 1.5px solid var(--green); color: #145633; }
   .alert ul { margin: 6px 0 0 20px; }
+  /* ทบทวนทุกบริษัท (แดชบอร์ด) */
+  .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .filters button { border:1.5px solid var(--border); background:#fff; color:var(--ink,#1c1c1e); border-radius:12px; padding:6px 12px; font:inherit; font-size:.8rem; font-weight:600; cursor:pointer; }
+  .filters button.on { background:var(--brand-600,#6fae2b); border-color:var(--brand-600,#6fae2b); color:#fff; }
+  .filters input { border:1.5px solid var(--border); border-radius:12px; padding:6px 12px; font:inherit; font-size:.8rem; min-width:220px; }
+  .rv-chip { display:inline-block; padding:2px 10px; border-radius:999px; font-size:.74rem; font-weight:700; white-space:nowrap; }
+  .rv-bad { background:var(--red-light); color:var(--red); } .rv-warn { background:var(--amber-light); color:#b86a00; } .rv-ok { background:var(--green-light); color:#1e7d43; } .rv-none { background:var(--bg); color:var(--gray); }
+  .rv-issues details { border-top:1px solid var(--border); padding:6px 0; } .rv-issues details:first-of-type { border-top:0; }
+  .rv-issues summary { cursor:pointer; display:flex; gap:10px; align-items:center; font-weight:600; font-size:.9rem; list-style:none; }
+  .rv-issues summary::-webkit-details-marker { display:none; } .rv-issues summary .cnt { margin-left:auto; color:var(--gray); font-weight:600; font-size:.8rem; }
+  .rv-issues ul { margin:6px 0 2px 22px; padding:0; list-style:none; font-size:.82rem; display:grid; gap:3px; }
+  .rv-issues ul a { color:var(--blue-dark); font-weight:600; cursor:pointer; text-decoration:none; } .rv-issues ul span { color:var(--gray); }
+  table.rv { border-collapse:collapse; width:100%; font-size:.84rem; }
+  table.rv th { font-size:.7rem; color:var(--gray); text-transform:uppercase; letter-spacing:.04em; text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  table.rv td { padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:top; } table.rv td.amt { text-align:right; font-variant-numeric:tabular-nums; }
+  table.rv tr:hover td { background:rgba(140,198,63,.07); } table.rv a { color:var(--blue-dark); font-weight:600; cursor:pointer; text-decoration:none; }
+  table.rv ul { margin:0; padding-left:14px; font-size:.78rem; color:var(--ink-2,#3a3a3c); }
   /* รายการตรวจสอบความถูกต้อง (ขั้น 4) */
   .vcheck ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
   .vcheck li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: .88rem; }
@@ -480,6 +497,28 @@
   </div>
 
   <!-- ===== รายการงาน — สถานะทุกบริษัท ===== -->
+  <div class="card screen-only" id="reviewCard">
+    <h2><span class="step">🧮</span> ทบทวนการคำนวณ ภ.ง.ด.51 ทุกบริษัท</h2>
+    <p class="note" style="margin-top:0">ตรวจข้อมูลของทุกบริษัทในระบบด้วยกติกาเดียวกับรายงานทบทวนปี 2569: เกณฑ์อัตราภาษี (ทุน/รายได้) · กระทบยอดกำไรทางภาษี · ฐานภาษีแบ่งช่วง · ขาดทุนสะสมไม่เกินกำไร · ภาษีปีก่อนตรงกับที่คำนวณ · เหตุอันสมควร ป.50/2537 · ประมาณการเทียบผลจริงครึ่งปี · WHT · ตรงกับไฟล์ Excel ที่นำเข้า — คลิกชื่อบริษัทเพื่อเปิดงานและแก้ไข</p>
+    <div class="btn-row">
+      <button class="btn-primary btn-sm" id="btnReviewAll" type="button">🧮 ตรวจทุกบริษัทตอนนี้</button>
+      <button class="btn-outline btn-sm" id="btnReviewExport" type="button" style="display:none">⭳ Export ผลทบทวน (Excel)</button>
+      <span class="hint" id="reviewMeta"></span>
+    </div>
+    <div id="reviewTiles" style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 6px"></div>
+    <div id="reviewIssues"></div>
+    <div class="filters" id="reviewFilters" style="display:none; margin-top:12px">
+      <button class="on" data-f="all" type="button">ทั้งหมด</button>
+      <button data-f="bad" type="button">ต้องแก้</button>
+      <button data-f="warn" type="button">เฉพาะข้อสังเกต</button>
+      <button data-f="ok" type="button">ผ่าน</button>
+      <button data-f="sh" type="button">เสี่ยง 67 ตรี</button>
+      <button data-f="none" type="button">ยังไม่มีข้อมูล</button>
+      <input id="reviewSearch" type="search" placeholder="ค้นหาชื่อบริษัท / Job Code / ผู้จัดทำ">
+      <span class="hint" id="reviewCount"></span>
+    </div>
+    <div id="reviewTable" style="overflow-x:auto; margin-top:8px"></div>
+  </div>
   <div class="card screen-only" id="folderCard">
     <h2><span class="step">📂</span> นำเข้าจากโฟลเดอร์งาน ภ.ง.ด.51 ทั้งชุด</h2>
     <p class="note" style="margin-top:0">เลือกโฟลเดอร์ <b>PND51 2026</b> (มีโฟลเดอร์ย่อยรายบริษัท) — โปรแกรมจะหาไฟล์ Estimate ล่าสุด, แบบที่ยื่นแล้ว (TAX_FORM_P51…), ใบเสร็จ (RECEIPT_P51…) และ Estimate ฉบับ PDF ของแต่ละบริษัท แล้วเติมข้อมูลคำนวณ + เอกสารแนบ + สถานะยื่นแบบ/ชำระเงินให้
@@ -3104,6 +3143,139 @@ function parseEstimateBoi(aoa, cell) {
   };
 }
 
+/* ---------- ทบทวนการคำนวณทุกบริษัท (2026-09-13) — คำนวณจากข้อมูลที่เก็บในบริษัท (ไม่ใช้ช่องกรอกบนหน้าจอ) ---------- */
+function companyResult(c) {
+  const est = c.est || {}; const n = v => parseNum(v || ''); const blank = v => String(v || '').trim() === '';
+  if (blank(est.profit)) return null;
+  const tbA = (c.tb && c.tb.A) || null, tbB = (c.tb && c.tb.B) || null, tbC = (c.tb && c.tb.C) || null;
+  const revenue = n(est.revenue), expense = n(est.expense), profit = n(est.profit), addBack = n(est.addBack), exempt = n(est.exempt), wht = n(est.wht);
+  const taxableBeforeLoss = profit + addBack - exempt;
+  const availableLoss = (c.lossCarry || []).reduce((s, v) => s + (parseNum(v) || 0), 0);
+  const lossBlank = blank(est.lossUsed);
+  const lossTableCap = (lossBlank || availableLoss > 0) ? availableLoss : Infinity;
+  const lossProfitCap = Math.max(taxableBeforeLoss, 0);
+  const lossTyped = lossBlank ? 0 : Math.max(0, n(est.lossUsed));
+  const lossUsed = lossBlank ? Math.max(0, Math.min(availableLoss, lossProfitCap)) : Math.max(0, Math.min(lossTyped, lossTableCap, lossProfitCap));
+  const taxableProfit = taxableBeforeLoss - lossUsed, half = Math.max(taxableProfit, 0) / 2;
+  const type = c.entityType === 'general' ? 'general' : 'sme';
+  let tax = 0, brackets = null, boi = null;
+  if (c.boiMode) { boi = boiSplit(taxableBeforeLoss, lossUsed, n(est.boi100), n(est.boi50), type); tax = boi.tax; brackets = boi.brackets; }
+  else if (type === 'sme') { const r = smeTax(half); tax = r.tax; brackets = r.brackets; }
+  else tax = half * 0.20;
+  const py = ensurePriorYearTax(c); const accProfit = tbA ? tbA.netProfit : null;
+  const pyTaxable = (accProfit || 0) + py.addBack - py.exempt - Math.max(0, py.lossUsed);
+  const citComputed = accProfit !== null ? estimateTaxOn(Math.max(pyTaxable, 0), type) : 0;
+  const priorCit = py.cit > 0 ? py.cit : citComputed, priorCitIsComputed = !(py.cit > 0) && accProfit !== null;
+  const lastYearBlank = blank(est.lastYearProfit);
+  return { c, revenue, expense, profit, addBack, exempt, wht, taxableBeforeLoss, availableLoss, lossUsed, lossTyped, lossAuto: lossBlank && lossUsed > 0,
+    lossCapped: !lossBlank && lossTyped > lossUsed + 0.005, taxableProfit, half, tax, brackets, boi, netPay: tax - wht, entityType: type,
+    priorCit, priorCitIsComputed, pyTaxable, pyCit: py.cit, pyWht: py.wht, accProfit, lastYear: (lastYearBlank && accProfit !== null) ? pyTaxable : n(est.lastYearProfit),
+    lastYearBlank: lastYearBlank && accProfit === null, safeHarbour: safeHarbourInfo(tax, priorCit, half, type), tbA, tbB, tbC, capital: parseNum(c.capital || 0) };
+}
+// รายการตรวจ (กติกาเดียวกับขั้น 4 และรายงานทบทวนปี 2569) — คืน [{st: ok|warn|bad, cat, detail}]
+function reviewChecks(r) {
+  const c = r.c, list = [];
+  const push = (st, cat, detail) => list.push({ st, cat, detail });
+  if (!/^\d{13}$/.test(c.taxId || '')) push('warn', 'ข้อมูลบริษัทไม่ครบ', 'เลขประจำตัวผู้เสียภาษีไม่ครบ 13 หลัก');
+  if (!c.yearEnd) push('warn', 'ข้อมูลบริษัทไม่ครบ', 'ยังไม่ระบุวันสิ้นรอบบัญชี');
+  const est = c.est || {}; const estRev = r.revenue || (r.tbC ? roundedLines(r.tbC).revenue : 0);
+  if (r.capital > 0 || estRev > 0) {
+    const overCap = r.capital > 5000000, overRev = estRev > 30000000, expected = (overCap || overRev) ? 'general' : 'sme';
+    if (expected !== r.entityType) push('bad', 'อัตราภาษีไม่ตรงเกณฑ์ทุน/รายได้ (ช่อง D7)', `ทุน ${fmt(r.capital)} · รายได้ ${fmt(estRev)} → ควรเป็น ${expected === 'sme' ? 'SME' : '20%'} แต่เลือก ${r.entityType === 'sme' ? 'SME' : '20%'}${expected === 'sme' ? ' (เสียภาษีเกิน)' : ''}`);
+  } else push('warn', 'ตรวจเกณฑ์อัตราภาษีไม่ได้', 'ไม่มีทุนจดทะเบียนและรายได้ให้ตรวจ');
+  if (r.entityType === 'sme' && estRev > 27000000 && estRev <= 30000000) push('warn', 'รายได้ใกล้เพดาน SME 30 ล้าน', `รายได้ ${fmt(estRev)}`);
+  if (r.revenue || r.expense) { const d = r.revenue - r.expense - r.profit; if (Math.abs(d) > 1) push('bad', 'รายได้ − รายจ่าย ≠ กำไร', `ต่างกัน ${fmt(d)}`); }
+  if (r.tbB) {
+    const bRev = r.tbB.totals.revenue;
+    if (bRev > 0 && estRev > 0) {
+      if (estRev + 1 < bRev) push('bad', 'ประมาณการรายได้ทั้งปีต่ำกว่ารายได้จริงครึ่งปีแรก', `ทั้งปี ${fmt(estRev)} < ครึ่งปี ${fmt(bRev)}`);
+      else if (estRev / bRev < 1.5) push('warn', 'ประมาณการรายได้ทั้งปีต่ำกว่า 1.5 เท่าของครึ่งปีแรก', `${(estRev / bRev).toFixed(2)} เท่า`);
+    }
+    if (r.tbB.netProfit > 0 && r.profit < r.tbB.netProfit) push('warn', 'ประมาณการกำไรทั้งปีต่ำกว่ากำไรจริงครึ่งปีแรก', `ทั้งปี ${fmt(r.profit)} < ครึ่งปี ${fmt(r.tbB.netProfit)}`);
+  }
+  if (r.addBack < 0 || r.exempt < 0) push('bad', 'เครื่องหมายรายการบวกกลับผิดด้าน', `บวกกลับ ${fmt(r.addBack)} · ยกเว้น ${fmt(r.exempt)}`);
+  if (r.lossCapped) push('warn', 'ขาดทุนสะสมที่พิมพ์เกินกำไร/ยอดตาราง (โปรแกรมจำกัดให้แล้ว)', `พิมพ์ ${fmt(r.lossTyped)} ใช้ได้ ${fmt(r.lossUsed)}`);
+  if (r.brackets) { const s = r.brackets.reduce((a, b) => a + b.amount, 0), base = r.boi ? r.boi.base : r.half; if (Math.abs(s - base) > 1) push('bad', 'ฐานภาษีแบ่งช่วงไม่เท่ากับฐานภาษี (ช่อง B35)', `${fmt(s)} ≠ ${fmt(base)}`); }
+  if (!(r.wht > 0) && r.pyWht > 0 && estRev > 0) push('warn', 'WHT ครึ่งปีเป็น 0 ทั้งที่ปีก่อนมี WHT', `ปีก่อน ${fmt(r.pyWht)}`);
+  if (r.wht > r.tax && r.tax > 0) push('warn', 'WHT สูงกว่าภาษีครึ่งปี (เครดิตต่อ)', `เกิน ${fmt(r.wht - r.tax)}`);
+  if (r.pyCit > 0 && r.accProfit !== null) { const calc = estimateTaxOn(Math.max(r.pyTaxable, 0), r.entityType); if (Math.abs(calc - r.pyCit) > 1) push('warn', 'ภาษีปีก่อนที่กรอกไม่ตรงกับที่คำนวณ (ช่อง D25)', `กรอก ${fmt(r.pyCit)} คำนวณได้ ${fmt(calc)}`); }
+  const s = r.safeHarbour;
+  if (s.status === 'risk') push('warn', 'ภาษีครึ่งปีต่ำกว่ากึ่งหนึ่งของภาษีปีก่อน (เสี่ยง 67 ตรี)', `ภาษี ${fmt(r.tax)} < ${fmt(s.halfPrior)} ขาด ${fmt(s.gap)}`);
+  else if (s.status === 'na' && !r.priorCitIsComputed && !(r.pyCit > 0)) push('warn', 'ไม่มีข้อมูลภาษีปีก่อน (เทียบเหตุอันสมควรไม่ได้)', 'กรอก CIT ปีก่อน หรือนำเข้างบ A');
+  if (r.lastYear > 0 && r.taxableProfit < r.lastYear * 0.75) push('warn', 'ประมาณการกำไรต่ำกว่า 75% ของกำไรปีก่อน', `${fmt(r.taxableProfit)} เทียบ ${fmt(r.lastYear)}`);
+  if (r.boi) { const B = r.boi; if ((B.boi100In > 0 || B.boi50In > 0) && B.boi100In + B.boi50In > Math.max(r.taxableBeforeLoss, 0) + 1) push('warn', 'ส่วน BOI ที่กรอกเกินกำไรทางภาษี', `${fmt(B.boi100In)} + ${fmt(B.boi50In)} > ${fmt(Math.max(r.taxableBeforeLoss, 0))}`); }
+  const ei = c.estimateImport;
+  if (ei && ei.tax !== undefined) { const d1 = Math.abs((ei.tax || 0) - r.tax), d2 = Math.abs((ei.netPay || 0) - r.netPay); if (d1 > 1 || d2 > 1) push('warn', 'ผลคำนวณต่างจากไฟล์ Excel ที่นำเข้า', `Excel ภาษี ${fmt(ei.tax)} · โปรแกรม ${fmt(r.tax)}${r.lossCapped ? ' (ต่างเพราะจำกัดขาดทุนสะสม)' : ''}`); }
+  return list;
+}
+let reviewRows = [], reviewFilter = 'all', reviewQ = '';
+function reviewAll() {
+  reviewRows = db.companies.map(c => {
+    const r = companyResult(c);
+    if (!r) return { c, r: null, sev: 'none', checks: [], name: c.name || '(ยังไม่ตั้งชื่อ)' };
+    const checks = reviewChecks(r);
+    const sev = checks.some(x => x.st === 'bad') ? 'bad' : checks.some(x => x.st === 'warn') ? 'warn' : 'ok';
+    return { c, r, sev, checks, name: c.name || '(ยังไม่ตั้งชื่อ)' };
+  }).sort((a, b) => a.name.localeCompare(b.name, 'th'));
+  $('reviewMeta').textContent = `ตรวจเมื่อ ${new Date().toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })} · ${reviewRows.length} บริษัท`;
+  $('btnReviewExport').style.display = reviewRows.length ? '' : 'none';
+  $('reviewFilters').style.display = reviewRows.length ? '' : 'none';
+  renderReview();
+}
+function renderReview() {
+  const cnt = k => reviewRows.filter(x => x.sev === k).length;
+  const shRisk = reviewRows.filter(x => x.r && x.r.safeHarbour.status === 'risk').length;
+  const taxTotal = reviewRows.reduce((s, x) => s + (x.r ? x.r.tax : 0), 0), netTotal = reviewRows.reduce((s, x) => s + (x.r ? Math.max(x.r.netPay, 0) : 0), 0);
+  const tile = (n, label, color) => `<div style="flex:1; min-width:104px; background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:10px 12px; text-align:center">
+    <div style="font-size:1.35rem; font-weight:800; color:${color || 'var(--ink, #1c1c1e)'}">${n}</div><div class="hint" style="line-height:1.25">${label}</div></div>`;
+  $('reviewTiles').innerHTML = tile(reviewRows.length, 'บริษัททั้งหมด') + tile(cnt('bad'), 'ต้องแก้', cnt('bad') ? '#ff3b30' : undefined) + tile(cnt('warn'), 'เฉพาะข้อสังเกต', cnt('warn') ? '#ff9f0a' : undefined)
+    + tile(cnt('ok'), 'ผ่านทุกรายการ', '#557f25') + tile(cnt('none'), 'ยังไม่มีประมาณการ') + tile(shRisk, 'เสี่ยง 67 ตรี', shRisk ? '#ff9f0a' : undefined)
+    + tile(fmt(taxTotal), 'รวมภาษีครึ่งปี (บาท)') + tile(fmt(netTotal), 'รวมยอดชำระ (บาท)');
+  // จัดกลุ่มประเด็น
+  const groups = new Map();
+  reviewRows.forEach(x => x.checks.forEach(k => { const key = k.st + '|' + k.cat; if (!groups.has(key)) groups.set(key, { st: k.st, cat: k.cat, items: [] }); groups.get(key).items.push({ x, detail: k.detail }); }));
+  const glist = [...groups.values()].sort((a, b) => (a.st === b.st ? b.items.length - a.items.length : (a.st === 'bad' ? -1 : 1)));
+  $('reviewIssues').innerHTML = glist.length ? `<div class="rv-issues">${glist.map(g => `<details><summary><span class="rv-chip rv-${g.st}">${g.st === 'bad' ? '✗ ต้องแก้' : '⚠ ข้อสังเกต'}</span>${escapeHtml(g.cat)}<span class="cnt">${g.items.length} บริษัท</span></summary>
+      <ul>${g.items.map(it => `<li><a onclick="reviewOpen('${it.x.c.id}')">${escapeHtml(it.x.name)}</a> <span>· ${escapeHtml(it.detail)}</span></li>`).join('')}</ul></details>`).join('')}</div>` : '<p class="note">✓ ไม่พบประเด็นในบริษัทที่มีข้อมูล</p>';
+  // ตาราง
+  const rows = reviewRows.filter(x => {
+    if (reviewFilter === 'sh') { if (!(x.r && x.r.safeHarbour.status === 'risk')) return false; }
+    else if (reviewFilter !== 'all' && x.sev !== reviewFilter) return false;
+    if (reviewQ && !((x.name + ' ' + (x.c.jobCode || '') + ' ' + (x.c.preparer || '')).toLowerCase().includes(reviewQ))) return false;
+    return true;
+  });
+  $('reviewCount').textContent = `${rows.length} / ${reviewRows.length} บริษัท`;
+  const SEV = { bad: ['ต้องแก้', 'rv-bad'], warn: ['ข้อสังเกต', 'rv-warn'], ok: ['ผ่าน', 'rv-ok'], none: ['ยังไม่มีข้อมูล', 'rv-none'] };
+  const SH = { ok: ['มีเหตุอันสมควร', 'rv-ok'], risk: ['ระวังขาดเกิน 25%', 'rv-bad'], na: ['ปีก่อนไม่มีภาษี', 'rv-none'] };
+  $('reviewTable').innerHTML = `<table class="rv"><thead><tr><th>ผล</th><th>บริษัท</th><th>อัตรา</th><th class="amt">กำไรทางภาษี</th><th class="amt">ภาษีครึ่งปี</th><th class="amt">WHT</th><th class="amt">ชำระ/(เครดิต)</th><th>ป.50/2537</th><th>ประเด็น</th><th>สถานะงาน</th></tr></thead><tbody>
+    ${rows.map(x => { const r = x.r, st = (WF_STATUS[ensureWorkflow(x.c).status] || WF_STATUS.draft).label;
+      return `<tr><td><span class="rv-chip ${SEV[x.sev][1]}">${SEV[x.sev][0]}</span></td>
+        <td><a onclick="reviewOpen('${x.c.id}')">${escapeHtml(x.name)}</a><br><span class="hint">${escapeHtml(x.c.jobCode || '')} ${x.c.boiMode ? '· BOI' : ''} ${escapeHtml(x.c.preparer || '')}</span></td>
+        <td>${r ? (r.entityType === 'sme' ? 'SME' : '20%') : ''}</td><td class="amt">${r ? fmt(r.taxableProfit) : ''}</td><td class="amt"><b>${r ? fmt(r.tax) : ''}</b></td><td class="amt">${r ? fmt(r.wht) : ''}</td><td class="amt">${r ? fmt(r.netPay) : ''}</td>
+        <td>${r ? `<span class="rv-chip ${SH[r.safeHarbour.status][1]}">${SH[r.safeHarbour.status][0]}</span>` : ''}</td>
+        <td>${x.checks.length ? '<ul>' + x.checks.map(k => `<li>${k.st === 'bad' ? '✗' : '⚠'} ${escapeHtml(k.cat)} <span class="hint">${escapeHtml(k.detail)}</span></li>`).join('') + '</ul>' : (r ? '<span class="hint">—</span>' : '<span class="hint">ยังไม่กรอกประมาณการกำไร</span>')}</td>
+        <td class="hint">${escapeHtml(st)}</td></tr>`; }).join('')}</tbody></table>`;
+}
+window.reviewOpen = function (id) { pickCompany(id); goToStep(4); };
+function reviewExport() {
+  const wb = XLSX.utils.book_new();
+  const SEV = { bad: 'ต้องแก้', warn: 'ข้อสังเกต', ok: 'ผ่าน', none: 'ยังไม่มีข้อมูล' }, SH = { ok: 'มีเหตุอันสมควร', risk: 'ระวังขาดเกิน 25%', na: 'ปีก่อนไม่มีภาษี' };
+  const rows = reviewRows.map(x => { const r = x.r; return { 'ผล': SEV[x.sev], 'บริษัท': x.name, 'เลขผู้เสียภาษี': x.c.taxId || '', 'Job Code': x.c.jobCode || '', 'อัตรา': r ? (r.entityType === 'sme' ? 'SME' : '20%') : '', 'BOI': x.c.boiMode ? 'ใช่' : '',
+    'ทุนจดทะเบียน': x.c.capital || '', 'ประมาณการรายได้': r ? r.revenue : '', 'กำไรทางบัญชี': r ? r.profit : '', 'กำไรทางภาษี': r ? r.taxableProfit : '', 'ฐานภาษีครึ่งปี': r ? (r.boi ? r.boi.base : r.half) : '',
+    'ภาษีครึ่งปี': r ? r.tax : '', 'WHT ครึ่งปี': r ? r.wht : '', 'ชำระ/(เครดิต)': r ? r.netPay : '', 'CIT ปีก่อน': r ? r.priorCit : '', 'เหตุอันสมควร ป.50': r ? SH[r.safeHarbour.status] : '',
+    'ประเด็นต้องแก้': x.checks.filter(k => k.st === 'bad').map(k => k.cat + ': ' + k.detail).join('\n'), 'ข้อสังเกต': x.checks.filter(k => k.st === 'warn').map(k => k.cat + ': ' + k.detail).join('\n'),
+    'ผู้จัดทำ': x.c.preparer || '', 'สถานะงาน': (WF_STATUS[ensureWorkflow(x.c).status] || WF_STATUS.draft).label }; });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'บริษัท': '' }]), 'รายบริษัท');
+  const items = []; reviewRows.forEach(x => x.checks.forEach(k => items.push({ 'ประเภท': k.st === 'bad' ? 'ต้องแก้' : 'ข้อสังเกต', 'หมวด': k.cat, 'บริษัท': x.name, 'รายละเอียด': k.detail })));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(items.length ? items : [{ 'หมวด': '' }]), 'ประเด็นรายรายการ');
+  XLSX.writeFile(wb, `pnd51-ทบทวนการคำนวณ-${stamp()}.xlsx`);
+  toast('ส่งออกผลทบทวนเป็นไฟล์ Excel แล้ว');
+}
+$('btnReviewAll').addEventListener('click', () => { saveCompanyFromForm(); reviewAll(); });
+$('btnReviewExport').addEventListener('click', reviewExport);
+$('reviewFilters').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { $('reviewFilters').querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); reviewFilter = b.dataset.f; renderReview(); }));
+$('reviewSearch').addEventListener('input', e => { reviewQ = e.target.value.trim().toLowerCase(); renderReview(); });
+
 /* ---------- นำเข้าจากโฟลเดอร์งานทั้งชุด (2026-09-13) ----------
    โครงสร้างโฟลเดอร์สำนักงาน: PND51 2026/<CODE>_<ชื่อบริษัท>/ (หรือ PND51 2026/00.Group X/<CODE>_<ชื่อ>/) มีไฟล์
    XXX_2026_Estimate PND.51*.xlsx (คำนวณ) · XXX_2026_Estimate PND.51*.pdf (ฉบับพิมพ์) · TAX_FORM_P51…pdf (แบบที่ยื่น e-Filing) · RECEIPT_P51…pdf (ใบเสร็จ)
@@ -4237,6 +4409,7 @@ function renderWizard() {
   $('dashSummary').style.display = work ? 'none' : '';
   $('jobsCard').style.display = work ? 'none' : '';
   $('folderCard').style.display = work ? 'none' : '';
+  $('reviewCard').style.display = work ? 'none' : '';
   $('wizardProgress').style.display = work ? '' : 'none';
   document.querySelector('.wizard-nav').style.display = work ? '' : 'none';
   WIZARD_STEPS.forEach(n => {
